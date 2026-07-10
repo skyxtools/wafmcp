@@ -71,6 +71,17 @@ you how it would skew a finding and which oracle to trust instead.
   candidates are listed but never contacted. Output includes concrete
   `next_steps` (re-calibrate against the IP, replay blocked payloads with a Host
   header, keep using the confirmed IP for all oracles).
+- **`check_takeover`** — **subdomain takeover.** Resolves the host's CNAME chain;
+  if it points at a takeover-prone service (GitHub Pages, S3, Heroku, Azure,
+  Shopify, Fastly, …), fetches the page and confirms only when that service's
+  known *unclaimed / no-such-site* fingerprint is present. A dangling CNAME alone
+  is not reported. Returns verdict, evidence, and safe-PoC `next_steps`.
+- **`verify_race`** — **race condition.** Fires N identical requests released
+  *simultaneously* (a `threading.Barrier` makes them cross the check-then-act
+  window together) and confirms a finding when the number of successes exceeds
+  the operator-asserted legitimate ceiling (e.g. a single-use coupon that applies
+  twice). The rate limit is bypassed for the burst (a limit would hide the bug);
+  scope and forbidden method/path rules still apply.
 
 ## Safety: scope is confirmed with the operator, not guessed
 

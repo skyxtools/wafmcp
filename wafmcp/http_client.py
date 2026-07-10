@@ -137,6 +137,31 @@ class Probe:
         if hi > 0:
             time.sleep(random.uniform(lo, hi))
 
+        return self._dispatch(method, url, params, headers, data, json, extra_ua)
+
+    def send_unthrottled(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        data: Any = None,
+        json: Any = None,
+        extra_ua: str | None = None,
+    ) -> Response:
+        """Like send() but WITHOUT throttle/jitter. Used only for race-condition
+        bursts where inserting delay would defeat the test. Scope and forbidden
+        method/path rules are still enforced; only the rate limit is skipped."""
+        self.scope.check(url)
+        self.rules.enforce(method, url)
+        return self._dispatch(method, url, params, headers, data, json, extra_ua)
+
+    def _dispatch(
+        self, method: str, url: str,
+        params: dict[str, str] | None, headers: dict[str, str] | None,
+        data: Any, json: Any, extra_ua: str | None,
+    ) -> Response:
         h = dict(headers or {})
         h = self.rules.inject_headers(h)  # mandated identification headers
         if self.rotate_ua and "User-Agent" not in h and "user-agent" not in {k.lower() for k in h}:

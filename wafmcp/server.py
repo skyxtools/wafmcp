@@ -23,9 +23,11 @@ from .mutate import mutate
 from .oast import OastSession, OastUnavailable
 from .origin import gather_candidates, validate_origin
 from .passive import audit as passive_audit_fn
+from .race import verify_race as _oracle_race
 from .report import build_report
 from .rules import Rules, RuleViolation
 from .scope import Scope, OutOfScope
+from .takeover import check_takeover as _check_takeover
 from .verify import verify_access_control as _oracle_access_control
 from .verify import verify_cors as _oracle_cors
 from .verify import verify_differential as _oracle_differential
@@ -602,6 +604,79 @@ def _origin_next_steps(hostname: str, confirmed: list, listed: list) -> list[str
         )
         return steps
     return ["No candidates found."]
+
+
+@mcp.tool()
+def check_takeover(host: str, scheme: str = "https") -> str:
+    """Subdomain takeover oracle. Resolves the host's CNAME chain, and if it
+    points at a takeover-prone third-party service (GitHub Pages, S3, Heroku,
+    Azure, etc.), fetches the page and confirms only when the service's known
+    'unclaimed / no such site' fingerprint is present. A dangling CNAME alone is
+    not reported. Returns verdict, evidence, and next_steps (how to PoC safely)."""
+    if (g := _require_scope()):
+        return g
+    try:
+        with _probe() as p:
+            res = _check_takeover(p, host, scheme=scheme)
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    return json.dumps(res.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_race(
+    method: str,
+    url: str,
+    concurrency: int,
+    expected_max: int,
+    success_status: int = 200,
+    success_marker: str | None = None,
+    param: str | None = None,
+    value: str | None = None,
+    in_body: bool = False,
+    header_json: str | None = None,
+) -> str:
+    """Race-condition oracle. Fires `concurrency` identical requests released
+    simultaneously (barrier-synced to cross the check-then-act window together)
+    and confirms a finding when the number of successes exceeds expected_max.
+
+    Use for single-use coupons, one-per-account limits, balance withdrawals, etc.
+    - success_status / success_marker: what a granted action looks like.
+    - expected_max: the legitimate ceiling (e.g. 1 for a single-use coupon).
+    The rate limit is bypassed for the burst (a limit would hide the bug); scope
+    and forbidden method/path rules still apply. Keep concurrency modest (<=50).
+    """
+    if (g := _require_scope()):
+        return g
+    headers = {}
+    if header_json:
+        try:
+            headers = json.loads(header_json)
+        except json.JSONDecodeError as e:
+            return f"bad header_json: {e}"
+    params = data = None
+    if param is not None:
+        if in_body:
+            data = {param: value or ""}
+        else:
+            params = {param: value or ""}
+
+    p = _probe()
+    try:
+        v = _oracle_race(
+            p, method=method, url=url, concurrency=concurrency,
+            expected_max=expected_max, success_status=success_status,
+            success_marker=success_marker, params=params, headers=headers, data=data,
+        )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    finally:
+        p.close()
+    return json.dumps(v.to_dict(), indent=2)
 
 
 def main() -> None:
