@@ -29,9 +29,24 @@ you how it would skew a finding and which oracle to trust instead.
   saying which oracle to trust. In a bug-bounty context this answers the real
   question: *"will what I see during the live test reflect the backend, or a
   layer in front of it?"*
-- **`http_probe`** — the single, scope-gated egress point. Every request applies
-  transport evasion (UA rotation, jitter) and is classified `blocked` / `normal`
-  / `anomaly`. Only `anomaly` is a candidate.
+- **`http_probe`** — the single, scope-gated egress point. Returns status,
+  timing, **response headers** (Location, Set-Cookie, Content-Type, CSP, …),
+  body (snippet or `full_body`), WAF hints, and blocked/normal/anomaly
+  classification. Sends proper request bodies (`json_body`, `form_json`,
+  `raw_body`), can `follow_redirects` and shows the redirect chain, and can act
+  as a saved `identity`.
+- **`login_capture`** — log in once and capture the resulting session (Set-Cookie
+  jar) into a named identity for all subsequent tools.
+- **`extract_endpoints`** — parse links/forms/JS-paths out of a body you already
+  fetched (parse-only, not a spider) to surface testable endpoints and params.
+- **`analyze_jwt`** — decode + audit a JWT: `alg=none` forgery (emits a forged
+  token to replay), weak-HMAC-secret crack, `kid` injection surface, expiry.
+- **`probe_methods`** — which HTTP methods the endpoint accepts (PUT/DELETE/
+  PATCH/TRACE) plus method-override header bypasses.
+- **`verify_open_redirect`** — confirms a param that drives a redirect to an
+  attacker-controlled host (Location oracle).
+- **`verify_lfi`** — path traversal / local file include, confirmed by a file
+  content signature (e.g. `root:x:0:0`), not just a status change.
 - **`mutate_payload`** — generate ordered bypass variants of ONE seed payload
   (encoding, comments, case, unicode, whitespace), stealthiest first.
 - **`oast_start` / `oast_poll`** — out-of-band callbacks via interactsh. A

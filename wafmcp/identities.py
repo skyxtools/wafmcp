@@ -42,6 +42,21 @@ class IdentityStore:
             raise KeyError(f"unknown identity {name!r}; set it with set_identity first")
         return self._ids[name]
 
+    def capture_cookies(self, name: str, cookies: dict[str, str]) -> Identity:
+        """Merge freshly-captured cookies (e.g. from a login Set-Cookie) into the
+        named identity's Cookie header, preserving any existing cookies."""
+        ident = self._ids.setdefault(name, Identity(name=name, headers={}))
+        jar: dict[str, str] = {}
+        existing = ident.headers.get("Cookie", "")
+        for part in existing.split(";"):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                jar[k.strip()] = v.strip()
+        jar.update(cookies)
+        if jar:
+            ident.headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in jar.items())
+        return ident
+
     def names(self) -> list[str]:
         return list(self._ids)
 

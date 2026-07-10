@@ -18,7 +18,12 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .http_client import Probe
+from .endpoints import extract_endpoints as _extract_endpoints
+from .endpoints import verify_lfi as _oracle_lfi
+from .endpoints import verify_open_redirect as _oracle_open_redirect
 from .identities import IdentityStore
+from .jwt_audit import analyze as _analyze_jwt
+from .methods import audit_methods as _audit_methods
 from .mutate import mutate
 from .oast import OastSession, OastUnavailable
 from .origin import gather_candidates, validate_origin
@@ -171,12 +176,27 @@ def http_probe(
     value: str | None = None,
     in_body: bool = False,
     header_json: str | None = None,
+    json_body: str | None = None,
+    raw_body: str | None = None,
+    form_json: str | None = None,
+    follow_redirects: bool = False,
+    full_body: bool = False,
+    identity: str | None = None,
     jitter_hi: float = 0.0,
     proxy: str | None = None,
 ) -> str:
-    """Send one WAF-aware HTTP request through the scope gate. Returns a
-    normalized response (status, length, timing, body hash, WAF hints, and - if a
-    baseline exists for this base_url - a classification of blocked/normal/anomaly).
+    """Send one WAF-aware HTTP request through the scope gate. Returns status,
+    length, timing, body hash, WAF hints, response headers (Location, Set-Cookie,
+    Content-Type, CSP, CORS, ...), redirect chain, and - if a baseline exists -
+    a blocked/normal/anomaly classification.
+
+    Body options (pick one): json_body (JSON string -> application/json),
+    raw_body (sent verbatim; set Content-Type via header_json), form_json (JSON
+    object -> application/x-www-form-urlencoded), or the simple param/value
+    (+in_body to put it in a form body).
+    follow_redirects: walk 3xx hops (each redirect target is re-checked against
+    scope). full_body: return the entire response body (up to 200 KB) for SPA/JS
+    analysis instead of a snippet. identity: send as a saved identity's headers.
 
     Only 'anomaly' responses are candidate findings; never report a 'blocked' as one.
     """
@@ -188,27 +208,45 @@ def http_probe(
             headers = json.loads(header_json)
         except json.JSONDecodeError as e:
             return f"bad header_json: {e}"
+    if identity:
+        try:
+            headers = {**_IDENTITIES.get(identity).headers, **headers}
+        except KeyError as e:
+            return str(e)
+
+    # resolve body: precedence json_body > raw_body > form_json > param/value
+    send_kwargs: dict = {"headers": headers, "follow_redirects": follow_redirects}
+    if json_body is not None:
+        try:
+            send_kwargs["json"] = json.loads(json_body)
+        except json.JSONDecodeError as e:
+            return f"bad json_body: {e}"
+    elif raw_body is not None:
+        send_kwargs["content"] = raw_body
+    elif form_json is not None:
+        try:
+            send_kwargs["data"] = json.loads(form_json)
+        except json.JSONDecodeError as e:
+            return f"bad form_json: {e}"
+    elif param is not None:
+        if in_body:
+            send_kwargs["data"] = {param: value or ""}
+        else:
+            send_kwargs["params"] = {param: value or ""}
+
     try:
         with _probe(0.0, jitter_hi, proxy) as p:
-            if param is not None:
-                if in_body:
-                    r = p.send(method, url, data={param: value or ""}, headers=headers)
-                else:
-                    r = p.send(method, url, params={param: value or ""}, headers=headers)
-            else:
-                r = p.send(method, url, headers=headers)
+            r = p.send(method, url, **send_kwargs)
     except OutOfScope as e:
         return f"OUT OF SCOPE: {e}"
     except RuleViolation as e:
         return f"RULE VIOLATION: {e}"
 
-    out = r.brief()
-    # attach classification if we have a baseline for the origin
+    out = r.brief(full_body=full_body)
     for base, bl in _BASELINES.items():
         if url.startswith(base.split("?")[0].rsplit("/", 1)[0]) or base in url:
             out["classification"] = bl.classify(r)
             break
-    out["body_snippet"] = r.body_snippet
     return json.dumps(out, indent=2)
 
 
@@ -335,6 +373,66 @@ def set_identity(name: str, headers_json: str | None = None, cookie: str | None 
             return f"bad headers_json: {e}"
     ident = _IDENTITIES.set(name, headers, cookie)
     return f"identity {name!r} set with headers: {list(ident.headers) or '(anonymous)'}"
+
+
+@mcp.tool()
+def login_capture(
+    name: str,
+    url: str,
+    json_body: str | None = None,
+    form_json: str | None = None,
+    method: str = "POST",
+    follow_redirects: bool = True,
+) -> str:
+    """Log in and capture the resulting session into a named identity. Sends the
+    credentials (json_body or form_json) to the login url, harvests Set-Cookie
+    from the response(s), and stores them as identity `name` for later use by
+    http_probe(identity=...), verify_access_control, etc.
+
+    Returns the captured cookie names and any auth-relevant response headers so
+    you can confirm the login worked."""
+    if (g := _require_scope()):
+        return g
+    send_kwargs: dict = {"follow_redirects": follow_redirects}
+    if json_body is not None:
+        try:
+            send_kwargs["json"] = json.loads(json_body)
+        except json.JSONDecodeError as e:
+            return f"bad json_body: {e}"
+    elif form_json is not None:
+        try:
+            send_kwargs["data"] = json.loads(form_json)
+        except json.JSONDecodeError as e:
+            return f"bad form_json: {e}"
+    else:
+        return "provide json_body or form_json with the login credentials"
+
+    try:
+        with _probe() as p:
+            r = p.send(method, url, **send_kwargs)
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+
+    if not r.cookies:
+        return json.dumps({
+            "captured": False,
+            "status": r.status,
+            "note": "no Set-Cookie in response. Login may use a token in the body "
+                    "instead - inspect the body and set_identity with the Authorization header.",
+            "body_snippet": r.body_snippet,
+            "headers": r.notable_headers(),
+        }, indent=2)
+    ident = _IDENTITIES.capture_cookies(name, r.cookies)
+    return json.dumps({
+        "captured": True,
+        "identity": name,
+        "status": r.status,
+        "cookies": list(r.cookies),
+        "cookie_header": ident.headers.get("Cookie", ""),
+        "redirects": r.redirects,
+    }, indent=2)
 
 
 @mcp.tool()
@@ -676,6 +774,91 @@ def verify_race(
         return f"RULE VIOLATION: {e}"
     finally:
         p.close()
+    return json.dumps(v.to_dict(), indent=2)
+
+
+@mcp.tool()
+def analyze_jwt(token: str) -> str:
+    """Decode and audit a JWT for deterministic flaws: alg=none surface (returns
+    a forged unsigned token to replay), weak HMAC secret (brute against a small
+    high-signal wordlist), kid injection, missing/long expiry, RS/HS confusion
+    surface. Pure token analysis - no target contact. next_steps tells you how
+    to confirm on the server."""
+    return json.dumps(_analyze_jwt(token).to_dict(), indent=2)
+
+
+@mcp.tool()
+def probe_methods(url: str) -> str:
+    """HTTP method audit. Reads OPTIONS Allow, probes GET/POST/PUT/DELETE/PATCH/
+    TRACE/CONNECT individually, and tests X-HTTP-Method-Override style bypasses.
+    Reports accepted vs rejected methods, override bypasses, and TRACE state -
+    plus next_steps on what to test with the dangerous methods that were accepted."""
+    if (g := _require_scope()):
+        return g
+    try:
+        with _probe() as p:
+            res = _audit_methods(p, url)
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    return json.dumps(res.to_dict(), indent=2)
+
+
+@mcp.tool()
+def extract_endpoints(base_url: str, body: str, include_external: bool = False) -> str:
+    """Parse links, forms, and inline API paths from an already-fetched body.
+    Zero extra traffic (no crawling). Use it to feed the LLM a menu of concrete
+    endpoints + form params it can then test with the other tools. Pair with
+    http_probe(full_body=true) to get the body first."""
+    eps = _extract_endpoints(base_url, body, include_external=include_external)
+    return json.dumps([e.to_dict() for e in eps], indent=2)
+
+
+@mcp.tool()
+def verify_open_redirect(
+    method: str, url: str, param: str, in_body: bool = False,
+    attacker_host: str = "evil.example",
+) -> str:
+    """Open redirect oracle. Tries several bypass payloads (raw URL, protocol-
+    relative //, backslash tricks, userinfo) and confirms only when the response
+    Location host is attacker-controlled."""
+    if (g := _require_scope()):
+        return g
+    try:
+        with _probe() as p:
+            v = _oracle_open_redirect(
+                p, method=method, url=url, param=param,
+                in_body=in_body, attacker_host=attacker_host,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    return json.dumps(v.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_lfi(
+    method: str, url: str, param: str, in_body: bool = False,
+    target_os: str = "auto",
+) -> str:
+    """Path traversal / LFI oracle. Sends escalating traversal payloads (../ ,
+    URL-encoded, double-encoded, php://filter) and confirms only when the body
+    contains a deterministic file signature (/etc/passwd 'root:x:0:0:' or
+    win.ini section headers). target_os: 'auto' | 'unix' | 'windows'."""
+    if (g := _require_scope()):
+        return g
+    try:
+        with _probe() as p:
+            v = _oracle_lfi(
+                p, method=method, url=url, param=param,
+                in_body=in_body, target_os=target_os,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
     return json.dumps(v.to_dict(), indent=2)
 
 
