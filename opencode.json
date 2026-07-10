@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "wafmcp": {
+      "type": "local",
+      "command": ["python", "-m", "wafmcp"],
+      "enabled": true,
+      "environment": {}
+    }
+  }
+}

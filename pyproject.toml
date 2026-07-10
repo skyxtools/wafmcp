@@ -1,0 +1,22 @@
+[project]
+name = "wafmcp"
+version = "0.1.0"
+description = "Minimal, evidence-first MCP server for authorized WAF/web security testing"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+wafmcp = "wafmcp.server:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["wafmcp"]
