@@ -18,6 +18,7 @@ import statistics
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .http_client import Probe, Response
 from .oast import OastSession
@@ -31,15 +32,19 @@ class Verdict:
     confidence: float          # 0..1
     evidence: list[str] = field(default_factory=list)
     trials: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "confirmed": self.confirmed,
             "oracle": self.oracle,
             "confidence": round(self.confidence, 2),
             "trials": self.trials,
             "evidence": self.evidence,
         }
+        if self.details:
+            result["details"] = self.details
+        return result
 
 
 def _send(probe: Probe, method: str, url: str, param: str, value: str, in_body: bool) -> Response:
@@ -195,30 +200,244 @@ def verify_cors(
     *,
     url: str,
     evil_origin: str = "https://evil.example",
+    identity_headers: dict[str, str] | None = None,
+    trusted_origin: str | None = None,
+    intranet_target: bool = False,
+    cookie_same_site: str | None = None,
+    cookie_secure: bool | None = None,
 ) -> Verdict:
-    """CORS misconfiguration oracle (deterministic, single pair of requests).
+    """Evidence-first CORS oracle based on PortSwigger's attack taxonomy.
 
-    Confirmed when the server reflects an attacker-controlled Origin in
-    Access-Control-Allow-Origin (or uses '*') together with
-    Access-Control-Allow-Credentials: true - which lets a malicious site read
-    authenticated responses cross-origin.
+    The policy probes cover an attacker-controlled origin, ``null``, and (when
+    supplied) a trusted origin plus the classic prefix-matching parser bypass.
+    A credentialed finding is confirmed only when all browser and impact
+    preconditions are demonstrated:
+
+      * ACAO exactly matches an attacker-generatable Origin;
+      * ACAC is ``true``;
+      * a cookie identity was supplied with cross-site-eligible attributes
+        (``SameSite=None; Secure``); and
+      * the authenticated response differs from the anonymous control.
+
+    Header behavior without authenticated, non-public data remains a candidate,
+    not a reportable data-theft finding. ACAO ``*`` is never treated as
+    credentialed access because browsers reject wildcard ACAO with credentials.
+    It is confirmable only for an explicitly identified intranet target, where
+    unauthenticated internal content may be readable through a victim's browser.
     """
-    r = probe.send("GET", url, headers={"Origin": evil_origin})
-    acao = r.headers.get("access-control-allow-origin") or r.headers.get(
-        "Access-Control-Allow-Origin", ""
+
+    def canonical_origin(value: str, *, allow_null: bool = False) -> str:
+        value = value.strip()
+        if allow_null and value == "null":
+            return value
+        parts = urlsplit(value)
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.path not in {"", "/"}
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError(
+                f"invalid Origin {value!r}; use only scheme://host[:port]"
+            )
+        # An Origin never contains a trailing slash.
+        return f"{parts.scheme}://{parts.netloc}"
+
+    def header(response: Response, name: str) -> str:
+        wanted = name.lower()
+        return next(
+            (str(value).strip() for key, value in response.headers.items()
+             if key.lower() == wanted),
+            "",
+        )
+
+    def prefix_bypass_origin(allowed: str, attacker: str) -> str | None:
+        allowed_parts = urlsplit(allowed)
+        attacker_parts = urlsplit(attacker)
+        if allowed_parts.port is not None:
+            # Appending an attacker domain after a port does not produce a valid
+            # browser Origin. Let the operator supply a custom evil_origin.
+            return None
+        host = f"{allowed_parts.hostname}.{attacker_parts.hostname}"
+        port = f":{attacker_parts.port}" if attacker_parts.port is not None else ""
+        return f"{attacker_parts.scheme}://{host}{port}"
+
+    evil_origin = canonical_origin(evil_origin)
+    target_parts = urlsplit(url)
+    if target_parts.scheme not in {"http", "https"} or not target_parts.hostname:
+        raise ValueError(f"invalid target URL {url!r}; expected http(s) URL")
+    target_origin = f"{target_parts.scheme}://{target_parts.netloc}"
+    trusted_origin = canonical_origin(trusted_origin) if trusted_origin else None
+    identity_headers = dict(identity_headers or {})
+    has_cookie_identity = any(k.lower() == "cookie" for k in identity_headers)
+    same_site = (cookie_same_site or "unknown").strip().lower()
+    if same_site not in {"unknown", "lax", "strict", "none"}:
+        raise ValueError(
+            "cookie_same_site must be one of: Lax, Strict, None, or omitted"
+        )
+    cross_site_cookie_eligible = bool(same_site == "none" and cookie_secure is True)
+
+    cases: list[tuple[str, str, bool]] = [
+        ("attacker_origin", evil_origin, True),
+        ("null_origin", "null", True),
+    ]
+    if trusted_origin:
+        bypass = prefix_bypass_origin(trusted_origin, evil_origin)
+        if bypass:
+            cases.append(("prefix_parser_bypass", bypass, True))
+        # A trusted origin is useful attack-surface evidence but is not attacker
+        # controlled until XSS, takeover, or an HTTP interception prerequisite is
+        # independently proven.
+        cases.append(("trusted_origin", trusted_origin, False))
+
+    observations: list[dict[str, Any]] = []
+    ev: list[str] = [
+        f"target origin: {target_origin}",
+        f"cookie identity supplied: {has_cookie_identity}",
+        f"session cookie SameSite: {same_site}",
+        f"session cookie Secure: {cookie_secure}",
+        f"cross-site cookie eligible: {cross_site_cookie_eligible}",
+    ]
+    confirmed_cases: list[str] = []
+    policy_candidates: list[str] = []
+    wildcard_seen = False
+    readable_wildcard_seen = False
+    auth_dependent_seen = False
+
+    for name, origin, attacker_generatable in cases:
+        auth_headers = {**identity_headers, "Origin": origin}
+        response = probe.send("GET", url, headers=auth_headers)
+        anon = None
+        if identity_headers:
+            anon = probe.send("GET", url, headers={"Origin": origin})
+
+        acao = header(response, "access-control-allow-origin")
+        acac = header(response, "access-control-allow-credentials").lower() == "true"
+        vary = header(response, "vary")
+        exact_match = acao == origin
+        wildcard = acao == "*"
+        wildcard_seen = wildcard_seen or wildcard
+        successful = response.status in {200, 201, 202, 203, 206}
+        auth_dependent = bool(
+            anon
+            and successful
+            and (response.status, response.body_sha1) != (anon.status, anon.body_sha1)
+        )
+        auth_dependent_seen = auth_dependent_seen or auth_dependent
+        blocked = response.blocked_heuristic or bool(response.error)
+        readable_wildcard_seen = readable_wildcard_seen or bool(
+            wildcard and successful and not blocked
+        )
+        browser_credentialed_read = (
+            attacker_generatable
+            and exact_match
+            and acac
+            and has_cookie_identity
+            and cross_site_cookie_eligible
+            and auth_dependent
+            and not blocked
+        )
+
+        observation = {
+            "case": name,
+            "origin": origin,
+            "status": response.status,
+            "acao": acao,
+            "acac": acac,
+            "vary": vary,
+            "attacker_generatable": attacker_generatable,
+            "authenticated_response_differs": auth_dependent,
+            "blocked_or_error": blocked,
+            "browser_credentialed_read": browser_credentialed_read,
+        }
+        if anon:
+            observation["anonymous_status"] = anon.status
+        observations.append(observation)
+        ev.append(
+            f"{name}: Origin={origin!r} status={response.status} "
+            f"ACAO={acao!r} ACAC={acac} auth-diff={auth_dependent}"
+        )
+
+        if browser_credentialed_read:
+            confirmed_cases.append(name)
+        elif attacker_generatable and exact_match and acac and successful and not blocked:
+            policy_candidates.append(name)
+
+    if readable_wildcard_seen and intranet_target:
+        confirmed_cases.append("intranet_wildcard")
+        ev.append(
+            "wildcard ACAO on an operator-identified intranet target allows "
+            "cross-origin reading of unauthenticated internal content"
+        )
+    elif wildcard_seen:
+        ev.append(
+            "ACAO='*' is not credentialed browser access, even if ACAC=true; "
+            "only the PortSwigger intranet-without-credentials case may be exploitable"
+        )
+
+    if confirmed_cases:
+        ev.append(
+            "browser-readable CORS path and non-public impact prerequisites confirmed: "
+            + ", ".join(confirmed_cases)
+        )
+    elif policy_candidates:
+        ev.append(
+            "CORS policy candidate only; authenticated non-public impact was not "
+            "demonstrated: " + ", ".join(policy_candidates)
+        )
+    if has_cookie_identity and auth_dependent_seen and not cross_site_cookie_eligible:
+        if same_site in {"lax", "strict"}:
+            ev.append(
+                f"SameSite={same_site.title()} blocks the session cookie on an "
+                "external cross-site fetch; a manually attached Cookie header is "
+                "not proof of browser exploitation"
+            )
+        elif same_site == "none" and cookie_secure is not True:
+            ev.append(
+                "SameSite=None requires Secure for browser acceptance; cross-site "
+                "credential delivery was not established"
+            )
+        else:
+            ev.append(
+                "session cookie SameSite/Secure attributes were not supplied; "
+                "cross-site credential delivery remains unverified"
+            )
+    if trusted_origin:
+        ev.append(
+            "trusted-origin acceptance is not independently exploitable; verify XSS, "
+            "subdomain takeover, or an HTTP/TLS interception prerequisite separately"
+        )
+
+    confirmed = bool(confirmed_cases)
+    confidence = 0.98 if confirmed else (0.55 if policy_candidates else 0.0)
+    return Verdict(
+        confirmed,
+        "cors",
+        confidence,
+        ev,
+        len(observations) + (len(observations) if identity_headers else 0),
+        {
+            "classification": (
+                "exploitable_cors" if confirmed else
+                "policy_candidate" if policy_candidates else
+                "not_confirmed"
+            ),
+            "confirmed_cases": confirmed_cases,
+            "policy_candidates": policy_candidates,
+            "cookie_policy": {
+                "same_site": same_site,
+                "secure": cookie_secure,
+                "cross_site_eligible": cross_site_cookie_eligible,
+                "note": (
+                    "Browser third-party-cookie policy still requires a real browser PoC"
+                ),
+            },
+            "observations": observations,
+        },
     )
-    acac = (
-        r.headers.get("access-control-allow-credentials")
-        or r.headers.get("Access-Control-Allow-Credentials", "")
-    ).lower() == "true"
-    ev = [f"sent Origin: {evil_origin}", f"ACAO={acao!r}", f"ACAC={acac}"]
-    reflects = acao == evil_origin
-    wildcard_creds = acao == "*" and acac
-    confirmed = (reflects and acac) or wildcard_creds
-    if confirmed:
-        ev.append("attacker origin allowed WITH credentials -> cross-origin data theft")
-    conf = 0.9 if confirmed else (0.4 if reflects else 0.0)
-    return Verdict(confirmed, "cors", conf, ev, 1)
 
 
 def verify_reflection(
