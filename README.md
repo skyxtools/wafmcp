@@ -101,8 +101,15 @@ your own browser and pass the resulting cookie via `cookie=`.
 - **`verify_oast`** — **blind SSRF / RCE / XXE / blind SQLi.** Inject a
   `{OAST}` callback into your payload template; an interactsh interaction is the
   proof.
-- **`check_cors`** — **CORS misconfiguration.** Deterministic: reflected
-  attacker `Origin` + `Access-Control-Allow-Credentials: true`.
+- **`check_cors`** — **evidence-first CORS verification aligned with
+  PortSwigger.** Tests attacker-controlled and `null` origins, prefix-parser
+  bypasses, trusted-origin relationships, and the unauthenticated intranet
+  wildcard case. Credentialed impact is confirmed only with a saved cookie
+  identity whose response differs from the anonymous control and whose supplied
+  attributes permit cross-site delivery (`SameSite=None; Secure`). A manually
+  attached Lax/Strict cookie remains a candidate, and `ACAO: *` is never
+  misreported as credentialed browser access. A real-browser PoC is still needed
+  to account for browser-level third-party-cookie blocking.
 - **`verify_reflection`** — **reflected XSS.** Canary → context detection
   (html/attr/script) → confirms the breaker returns *unencoded*. A plain
   reflection is not reported.
