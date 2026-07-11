@@ -29,13 +29,13 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("serve", help="run the MCP server over stdio (default)")
     commands.add_parser(
         "update",
-        help="download and reinstall the latest main branch without a git clone",
+        help="upgrade to the latest main branch without a git clone",
     )
     return parser
 
 
 def update() -> int:
-    """Reinstall the package from the canonical GitHub source archive."""
+    """Upgrade the package from the canonical GitHub source archive."""
     command = [
         sys.executable,
         "-m",
@@ -43,7 +43,8 @@ def update() -> int:
         "install",
         "--disable-pip-version-check",
         "--upgrade",
-        "--force-reinstall",
+        "--upgrade-strategy",
+        "only-if-needed",
         UPDATE_URL,
     ]
     print(f"Updating wafmcp from {UPDATE_URL}", file=sys.stderr)

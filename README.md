@@ -179,9 +179,11 @@ When a new change is published, update the existing installation in place:
 wafmcp update
 ```
 
-The update command force-reinstalls the canonical `main` archive, so it also
-picks up changes that do not bump the package version. Restart the MCP client
-after it completes. For local development, clone the repository and use
+The update command upgrades the canonical `main` archive using pip's
+`only-if-needed` dependency strategy, so dependencies are changed only when the
+new release requires it. Every published change must bump the package version
+for pip to recognize it as an upgrade. Restart the MCP client after the command
+completes. For local development, clone the repository and use
 `pip install -e ".[dev]"` instead.
 
 For an automatically refreshed, ephemeral installation, use `uvx`. `--refresh`

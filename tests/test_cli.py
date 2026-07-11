@@ -16,7 +16,7 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert capsys.readouterr().out.strip() == f"wafmcp {__version__}"
 
 
-def test_update_reinstalls_canonical_archive(monkeypatch, capsys) -> None:
+def test_update_uses_only_if_needed_upgrade(monkeypatch, capsys) -> None:
     seen: dict[str, object] = {}
 
     def fake_run(command, check):
@@ -35,7 +35,8 @@ def test_update_reinstalls_canonical_archive(monkeypatch, capsys) -> None:
             "install",
             "--disable-pip-version-check",
             "--upgrade",
-            "--force-reinstall",
+            "--upgrade-strategy",
+            "only-if-needed",
             cli.UPDATE_URL,
         ],
         "check": False,
