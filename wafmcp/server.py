@@ -26,6 +26,7 @@ from .jwt_audit import analyze as _analyze_jwt
 from .methods import audit_methods as _audit_methods
 from .mutate import mutate
 from .oast import OastSession, OastUnavailable
+from .browser import browser_inspect as _browser_inspect, BrowserUnavailable
 from .origin import gather_candidates, validate_origin
 from .passive import audit as passive_audit_fn
 from .race import verify_race as _oracle_race
@@ -865,6 +866,37 @@ def verify_lfi(
     except RuleViolation as e:
         return f"RULE VIOLATION: {e}"
     return json.dumps(v.to_dict(), indent=2)
+
+
+@mcp.tool()
+def browser_inspect(url: str, wait_ms: int = 2500, cookie: str | None = None,
+                    headless: bool = True) -> str:
+    """Render a URL in a real headless browser (opt-in; needs Playwright) and
+    report iframe-security signals that HTTP clients can't see:
+      - framing: X-Frame-Options / CSP frame-ancestors + frameable-by-attacker verdict
+      - iframes: every <iframe> in the final DOM incl. JS-injected proxy iframes
+        (this is how you catch something like gtm-orn that is NXDOMAIN over plain DNS
+        but gets embedded when the page renders)
+      - postMessage: listener count + captured messages (postMessage-XSS surface)
+      - storage: localStorage/sessionStorage keys (client-side token leakage)
+
+    A real browser reaches further than curl, but aggressive bot walls (e.g.
+    DataDome) may still serve a CAPTCHA to headless Chromium. To get past one,
+    solve it once in your own browser, copy the resulting cookie (e.g. the
+    `datadome` cookie) and pass it as `cookie` ("name=value; name2=value2"); try
+    headless=false too. Navigation is scope-gated. If Playwright isn't installed,
+    returns install instructions."""
+    if (g := _require_scope()):
+        return g
+    try:
+        _SCOPE.check(url)
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    try:
+        rep = _browser_inspect(_SCOPE, url, wait_ms=wait_ms, cookie=cookie, headless=headless)
+    except BrowserUnavailable as e:
+        return f"BROWSER UNAVAILABLE: {e}"
+    return json.dumps(rep.to_dict(), indent=2)
 
 
 def main() -> None:

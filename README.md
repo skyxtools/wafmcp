@@ -56,6 +56,25 @@ you how it would skew a finding and which oracle to trust instead.
   attacker-controlled host (Location oracle).
 - **`verify_lfi`** — path traversal / local file include, confirmed by a file
   content signature (e.g. `root:x:0:0`), not just a status change.
+- **`browser_inspect`** — *(opt-in, needs Playwright)* render a URL in a real
+  headless Chromium and report client-side signals HTTP clients can't see:
+  framing (X-Frame-Options / CSP frame-ancestors + frameable-by-attacker
+  verdict), **iframes in the final DOM** (incl. JS-injected proxy iframes),
+  postMessage listener count + observed messages, and localStorage/sessionStorage
+  keys. Accepts a `cookie` string to carry a manually-solved bot-wall cookie
+  (e.g. DataDome) and `headless=false`.
+
+### Optional: browser module
+
+```bash
+pip install "wafmcp[browser]"   # or: pip install playwright
+playwright install chromium
+```
+
+The core toolkit needs neither Playwright nor a browser; `browser_inspect`
+returns install instructions until they're present. Note: aggressive bot walls
+(DataDome, etc.) can still challenge headless Chromium — solve the CAPTCHA once in
+your own browser and pass the resulting cookie via `cookie=`.
 - **`mutate_payload`** — generate ordered bypass variants of ONE seed payload
   (encoding, comments, case, unicode, whitespace), stealthiest first.
 - **`oast_start` / `oast_poll`** — out-of-band callbacks via interactsh. A
