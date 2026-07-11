@@ -95,6 +95,43 @@ class Response:
         return out
 
 
+class HeaderError(ValueError):
+    """A header key/value could not be safely encoded for transmission."""
+
+
+def sanitize_headers(headers: dict | None) -> dict[str, str]:
+    """Coerce header values to safe strings at the single egress point.
+
+    Handles the common real-world cases that otherwise crash httpx:
+      - non-string values from JSON (int/bool/float) -> str
+      - None values                                  -> dropped
+      - CR/LF in a value (header/CRLF injection)      -> rejected
+      - non-latin-1 characters httpx cannot encode    -> rejected with a clear msg
+    """
+    out: dict[str, str] = {}
+    for k, v in (headers or {}).items():
+        if v is None:
+            continue
+        key = str(k)
+        if isinstance(v, bool):
+            val = "true" if v else "false"
+        elif isinstance(v, (int, float)):
+            val = str(v)
+        else:
+            val = str(v)
+        if "\n" in key or "\r" in key or "\n" in val or "\r" in val:
+            raise HeaderError(f"header {key!r} contains CR/LF (injection blocked)")
+        try:
+            key.encode("latin-1")
+            val.encode("latin-1")
+        except UnicodeEncodeError:
+            raise HeaderError(
+                f"header {key!r} has a non-latin-1 value; URL-encode it or use raw bytes"
+            )
+        out[key] = val
+    return out
+
+
 class Probe:
     def __init__(
         self,
@@ -198,6 +235,16 @@ class Probe:
         h = self.rules.inject_headers(h)  # mandated identification headers
         if self.rotate_ua and "User-Agent" not in h and "user-agent" not in {k.lower() for k in h}:
             h["User-Agent"] = extra_ua or random.choice(_UA_POOL)
+        # coerce/validate header values at the single egress point so a stray
+        # int/bool/None or CRLF never crashes the request mid-tool
+        try:
+            h = sanitize_headers(h)
+        except HeaderError as exc:
+            return Response(
+                url=url, method=method.upper(), status=0, length=0,
+                elapsed_ms=0.0, body_sha1="", headers={}, body_snippet="",
+                error=f"header error: {exc}",
+            )
 
         # Manually walk the redirect chain so the scope gate applies to EVERY hop
         # (httpx auto-follow would bypass it). Cap hops to avoid loops.
@@ -220,6 +267,13 @@ class Probe:
                     elapsed_ms=(time.perf_counter() - t0) * 1000,
                     body_sha1="", headers={}, body_snippet="", error=str(exc),
                     redirects=redirects,
+                )
+            except Exception as exc:  # last-resort: never let one request kill a tool
+                return Response(
+                    url=cur_url, method=cur_method, status=0, length=0,
+                    elapsed_ms=(time.perf_counter() - t0) * 1000,
+                    body_sha1="", headers={}, body_snippet="",
+                    error=f"{type(exc).__name__}: {exc}", redirects=redirects,
                 )
             if follow_redirects and r.status_code in (301, 302, 303, 307, 308):
                 loc = r.headers.get("location")

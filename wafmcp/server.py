@@ -89,8 +89,13 @@ def _require_scope() -> str | None:
     return None
 
 
-def _probe(jitter_lo: float = 0.0, jitter_hi: float = 0.0, proxy: str | None = None) -> Probe:
-    return Probe(_SCOPE, rules=_RULES, jitter=(jitter_lo, jitter_hi), proxy=proxy)
+def _probe(
+    jitter_lo: float = 0.0, jitter_hi: float = 0.0, proxy: str | None = None,
+    timeout: float = 12.0,
+) -> Probe:
+    return Probe(
+        _SCOPE, rules=_RULES, jitter=(jitter_lo, jitter_hi), proxy=proxy, timeout=timeout
+    )
 
 
 @mcp.tool()

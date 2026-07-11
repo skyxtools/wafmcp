@@ -21,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -86,13 +87,16 @@ class OriginCandidate:
 def _resolve(name: str) -> list[str]:
     try:
         infos = socket.getaddrinfo(name, None, family=socket.AF_INET)
-    except socket.gaierror:
+    except (socket.gaierror, OSError, UnicodeError):
+        return []
+    except Exception:
         return []
     return sorted({i[4][0] for i in infos})
 
 
-def _crtsh_subdomains(hostname: str, timeout: float = 15.0) -> set[str]:
-    """Best-effort certificate-transparency lookup. Never raises."""
+def _crtsh_subdomains(hostname: str, timeout: float = 8.0) -> set[str]:
+    """Best-effort certificate-transparency lookup. Never raises, never hangs
+    long (short timeout so the tool stays responsive)."""
     root = hostname.lstrip("*.")
     subs: set[str] = set()
     try:
@@ -111,23 +115,40 @@ def _crtsh_subdomains(hostname: str, timeout: float = 15.0) -> set[str]:
     return subs
 
 
-def gather_candidates(hostname: str, use_crtsh: bool = True) -> dict[str, OriginCandidate]:
+def gather_candidates(
+    hostname: str, use_crtsh: bool = True, max_names: int = 150
+) -> dict[str, OriginCandidate]:
     """Collect candidate origin IPs from CT logs + subdomain resolution, minus
-    any CDN-owned address. Purely passive: queries public DNS/CT, not the target."""
+    any CDN-owned address. Purely passive: queries public DNS/CT, not the target.
+
+    Resolution is parallelized and the candidate name set is capped (max_names)
+    so a domain with hundreds of CT entries can't stall the tool."""
     root = hostname.lstrip("*.")
     names = {root} | {f"{s}.{root}" for s in _LEAKY_SUBDOMAINS}
     if use_crtsh:
         names |= _crtsh_subdomains(root)
 
+    # cap: always keep apex + leaky subdomains, then fill from CT up to the limit
+    priority = {root} | {f"{s}.{root}" for s in _LEAKY_SUBDOMAINS}
+    ordered = sorted(priority & names) + sorted(names - priority)
+    ordered = ordered[:max_names]
+
     candidates: dict[str, OriginCandidate] = {}
-    for name in sorted(names):
-        for ip in _resolve(name):
-            if is_cdn_ip(ip):
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        futures = {ex.submit(_resolve, name): name for name in ordered}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                ips = fut.result()
+            except Exception:
                 continue
-            c = candidates.setdefault(ip, OriginCandidate(ip=ip))
-            label = "apex" if name == root else name
-            if label not in c.sources:
-                c.sources.append(label)
+            for ip in ips:
+                if is_cdn_ip(ip):
+                    continue
+                c = candidates.setdefault(ip, OriginCandidate(ip=ip))
+                label = "apex" if name == root else name
+                if label not in c.sources:
+                    c.sources.append(label)
     return candidates
 
 
