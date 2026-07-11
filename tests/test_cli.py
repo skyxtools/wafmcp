@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from wafmcp import cli
+from wafmcp import __version__, cli
 
 
 def test_version(capsys: pytest.CaptureFixture[str]) -> None:
@@ -13,7 +13,7 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
         cli.main(["--version"])
 
     assert exc.value.code == 0
-    assert capsys.readouterr().out.strip() == "wafmcp 0.2.0"
+    assert capsys.readouterr().out.strip() == f"wafmcp {__version__}"
 
 
 def test_update_reinstalls_canonical_archive(monkeypatch, capsys) -> None:

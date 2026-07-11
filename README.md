@@ -48,6 +48,10 @@ you how it would skew a finding and which oracle to trust instead.
   jar) into a named identity for all subsequent tools.
 - **`extract_endpoints`** — parse links/forms/JS-paths out of a body you already
   fetched (parse-only, not a spider) to surface testable endpoints and params.
+- **`wayback_urls`** — passive historical endpoint discovery through the
+  Internet Archive CDX API. Uses host/domain matching, `collapse=urlkey`, date
+  and status filters, hard result limits, and allow/deny scope filtering. It
+  queries only the archive index and never visits a returned target URL.
 - **`analyze_jwt`** — decode + audit a JWT: `alg=none` forgery (emits a forged
   token to replay), weak-HMAC-secret crack, `kid` injection surface, expiry.
 - **`probe_methods`** — which HTTP methods the endpoint accepts (PUT/DELETE/

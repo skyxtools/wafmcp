@@ -41,6 +41,7 @@ from .verify import verify_oast as _oracle_oast
 from .verify import verify_reflection as _oracle_reflection
 from .verify import verify_timing as _oracle_timing
 from .waf import Baseline, calibrate
+from .wayback import WaybackError, fetch_wayback_urls as _fetch_wayback_urls
 
 _INSTRUCTIONS = """\
 wafmcp is an evidence-first WAF/web testing server for AUTHORIZED engagements.
@@ -55,7 +56,8 @@ operator for:
 Then call set_scope with what they provide. Every other tool refuses to run
 until set_scope succeeds. If the operator is unsure, ask rather than assume.
 
-Workflow: after set_scope, run waf_calibrate. If it reports a WAF/CDN that would
+Workflow: after set_scope, use wayback_urls for passive endpoint discovery when
+useful, then run waf_calibrate before contacting a live target. If calibration reports a WAF/CDN that would
 distort testing, consider find_origin to locate the backend IP and (if the
 program authorizes contacting it) test the origin directly, where the WAF no
 longer interferes. A finding is only real when a verify_* oracle confirms it;
@@ -841,6 +843,42 @@ def extract_endpoints(base_url: str, body: str, include_external: bool = False) 
     http_probe(full_body=true) to get the body first."""
     eps = _extract_endpoints(base_url, body, include_external=include_external)
     return json.dumps([e.to_dict() for e in eps], indent=2)
+
+
+@mcp.tool()
+def wayback_urls(
+    target: str,
+    include_subdomains: bool = False,
+    limit: int = 1000,
+    from_timestamp: str | None = None,
+    to_timestamp: str | None = None,
+    status_code: int | None = None,
+    timeout: float = 25.0,
+) -> str:
+    """Passively discover historical URLs through the Internet Archive CDX API.
+    The target must be in operator-confirmed scope. Results are deduplicated and
+    filtered through both the allowlist and deny rules; returned URLs are NOT
+    contacted. include_subdomains switches CDX from host to domain matching but
+    never bypasses scope. Optional Wayback timestamps contain 1-14 digits.
+    limit is capped at 5000; status_code adds a server-side CDX filter."""
+    if (g := _require_scope()):
+        return g
+    try:
+        result = _fetch_wayback_urls(
+            _SCOPE,
+            target,
+            include_subdomains=include_subdomains,
+            limit=limit,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            status_code=status_code,
+            timeout=timeout,
+        )
+    except OutOfScope as exc:
+        return f"OUT OF SCOPE: {exc}"
+    except (ValueError, WaybackError) as exc:
+        return f"WAYBACK ERROR: {exc}"
+    return json.dumps(result.to_dict(), indent=2)
 
 
 @mcp.tool()
