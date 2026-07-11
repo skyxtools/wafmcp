@@ -532,20 +532,55 @@ def verify_oast(
 
 
 @mcp.tool()
-def check_cors(url: str, evil_origin: str = "https://evil.example") -> str:
-    """CORS misconfiguration oracle. Confirms a finding when the server reflects
-    an attacker-controlled Origin (or '*') together with
-    Access-Control-Allow-Credentials: true - enabling cross-origin theft of
-    authenticated data."""
+def check_cors(
+    url: str,
+    evil_origin: str = "https://evil.example",
+    identity: str | None = None,
+    trusted_origin: str | None = None,
+    intranet_target: bool = False,
+    cookie_same_site: str | None = None,
+    cookie_secure: bool | None = None,
+) -> str:
+    """Evidence-first CORS checks following PortSwigger's attack taxonomy.
+
+    Tests an attacker-controlled Origin, ``null``, and optionally a trusted
+    origin plus the classic ``trusted.example.evil.example`` prefix-parser
+    bypass. Supply a saved cookie-based ``identity`` plus the session cookie's
+    ``cookie_same_site`` and ``cookie_secure`` attributes. Credentialed impact
+    requires ``SameSite=None; Secure`` and an authenticated response that differs
+    from the anonymous control. A manually attached Lax/Strict cookie is never
+    treated as proof that an external attacker's browser can send it.
+
+    ``ACAO: *`` is not credentialed access in browsers. Set ``intranet_target``
+    only when the target is genuinely internal and otherwise unreachable from
+    the public web; this enables PortSwigger's intranet-without-credentials case.
+    A trusted origin is attack-surface evidence only until its XSS, takeover, or
+    HTTP/TLS interception prerequisite is proven separately.
+    """
     if (g := _require_scope()):
         return g
     try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
         with _probe() as p:
-            v = _oracle_cors(p, url=url, evil_origin=evil_origin)
+            v = _oracle_cors(
+                p,
+                url=url,
+                evil_origin=evil_origin,
+                identity_headers=identity_headers,
+                trusted_origin=trusted_origin,
+                intranet_target=intranet_target,
+                cookie_same_site=cookie_same_site,
+                cookie_secure=cookie_secure,
+            )
     except OutOfScope as e:
         return f"OUT OF SCOPE: {e}"
     except RuleViolation as e:
         return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID CORS INPUT: {e}"
     return json.dumps(v.to_dict(), indent=2)
 
 
