@@ -1,5 +1,14 @@
 # wafmcp
 
+> ⚠️ **For education and authorized testing only.** Use `wafmcp` exclusively
+> against systems you own or are **explicitly authorized** to test (your own labs,
+> or a bug-bounty / pentest program whose scope and rules permit it). Testing
+> systems without permission is illegal in most jurisdictions. This project is
+> provided for educational and defensive-research purposes, **as-is and without
+> warranty of any kind**. The authors accept **no liability** for any misuse or
+> damage. By using this tool you take full responsibility for your actions and
+> confirm you have authorization. See [Legal & Responsible Use](#legal--responsible-use).
+
 Minimal, **evidence-first** MCP server for authorized WAF / web-app security testing.
 
 The opposite of a 150-tool wrapper. Instead of hundreds of scanners that flood an
@@ -205,3 +214,43 @@ PYTHONPATH=. python tests/smoke_live.py  # live end-to-end vs a local mock targe
 The live smoke test proves the full loop: baseline learned, an injectable param
 **confirmed**, a non-injectable param **rejected** (no false positive), and an
 out-of-scope host **blocked**.
+
+## Legal & Responsible Use
+
+**English.** `wafmcp` is intended **solely for educational purposes and for
+authorized security testing.** You may use it **only** against systems you own or
+for which you hold **explicit, written authorization** (for example, an in-scope
+asset of a bug-bounty or penetration-testing engagement whose rules of engagement
+permit the activity). Unauthorized access to, or testing of, computer systems is
+illegal in most jurisdictions and may carry criminal and civil penalties.
+
+The tool enforces a **default-deny scope allowlist** (`set_scope`) precisely so
+that no request is ever sent to a host you have not explicitly authorized — but
+that gate is a safety aid, **not** a substitute for obtaining proper permission.
+
+This software is provided **"AS IS", without warranty of any kind**, express or
+implied, including but not limited to the warranties of merchantability, fitness
+for a particular purpose, and non-infringement. **In no event shall the authors
+or contributors be liable for any claim, damages, or other liability**, whether
+in an action of contract, tort, or otherwise, arising from, out of, or in
+connection with the software or its use. **The authors accept no responsibility
+whatsoever for any misuse.** By using `wafmcp`, you accept full and sole
+responsibility for your actions and confirm that you have the necessary
+authorization.
+
+**Bahasa Indonesia.** `wafmcp` **hanya** ditujukan untuk **tujuan edukasi dan
+pengujian keamanan yang berizin.** Gunakan **hanya** pada sistem milikmu sendiri
+atau yang kamu miliki **izin tertulis secara eksplisit** untuk mengujinya
+(misalnya aset yang masuk scope program bug bounty / pentest yang aturannya
+mengizinkan). Mengakses atau menguji sistem tanpa izin adalah **ilegal** di
+sebagian besar wilayah hukum dan dapat dikenai sanksi pidana maupun perdata.
+
+Tool ini memberlakukan **allowlist scope default-deny** (`set_scope`) agar tidak
+ada request yang terkirim ke host yang belum kamu izinkan — namun gerbang itu
+hanyalah alat bantu keamanan, **bukan** pengganti izin yang sah.
+
+Perangkat lunak ini disediakan **"SEBAGAIMANA ADANYA", tanpa jaminan apa pun.**
+**Penulis tidak bertanggung jawab atas segala penyalahgunaan** maupun kerugian
+yang timbul dari penggunaan tool ini. Dengan menggunakan `wafmcp`, kamu menerima
+tanggung jawab penuh atas tindakanmu dan menyatakan telah memiliki otorisasi yang
+diperlukan.
