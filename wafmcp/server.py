@@ -81,6 +81,31 @@ def _baseline_for(url: str) -> Baseline:
     return Baseline(target=base)
 
 
+def _json_arg(value, name: str):
+    """Tolerantly resolve a '*_json' argument. Some MCP clients pass the JSON
+    string as declared; others pre-parse it and hand us a dict/list. Accept both
+    (and a dict that arrived as a Python-repr string) so a client quirk can't
+    break the tool."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            # last resort: a single-quoted dict-ish string from a lax client
+            try:
+                import ast
+                parsed = ast.literal_eval(value)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+            raise ValueError(f"bad {name}: could not parse as JSON")
+    raise ValueError(f"bad {name}: unexpected type {type(value).__name__}")
+
+
 def _require_scope() -> str | None:
     if not _SCOPE.configured:
         return (
@@ -208,12 +233,10 @@ def http_probe(
     """
     if (g := _require_scope()):
         return g
-    headers = {}
-    if header_json:
-        try:
-            headers = json.loads(header_json)
-        except json.JSONDecodeError as e:
-            return f"bad header_json: {e}"
+    try:
+        headers = _json_arg(header_json, "header_json") or {}
+    except ValueError as e:
+        return str(e)
     if identity:
         try:
             headers = {**_IDENTITIES.get(identity).headers, **headers}
@@ -222,19 +245,18 @@ def http_probe(
 
     # resolve body: precedence json_body > raw_body > form_json > param/value
     send_kwargs: dict = {"headers": headers, "follow_redirects": follow_redirects}
-    if json_body is not None:
-        try:
-            send_kwargs["json"] = json.loads(json_body)
-        except json.JSONDecodeError as e:
-            return f"bad json_body: {e}"
-    elif raw_body is not None:
-        send_kwargs["content"] = raw_body
-    elif form_json is not None:
-        try:
-            send_kwargs["data"] = json.loads(form_json)
-        except json.JSONDecodeError as e:
-            return f"bad form_json: {e}"
-    elif param is not None:
+    try:
+        if json_body is not None and json_body != "":
+            send_kwargs["json"] = _json_arg(json_body, "json_body")
+        elif raw_body is not None:
+            send_kwargs["content"] = raw_body
+        elif form_json is not None and form_json != "":
+            send_kwargs["data"] = _json_arg(form_json, "form_json")
+        elif param is not None:
+            pass  # handled below
+    except ValueError as e:
+        return str(e)
+    if not any(k in send_kwargs for k in ("json", "content", "data")) and param is not None:
         if in_body:
             send_kwargs["data"] = {param: value or ""}
         else:
