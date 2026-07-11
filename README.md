@@ -67,9 +67,12 @@ you how it would skew a finding and which oracle to trust instead.
 ### Optional: browser module
 
 ```bash
-pip install "wafmcp[browser]"   # or: pip install playwright
+pipx inject --include-apps wafmcp playwright
 playwright install chromium
 ```
+
+For a local editable development installation, use
+`pip install -e ".[browser]"` instead.
 
 The core toolkit needs neither Playwright nor a browser; `browser_inspect`
 returns install instructions until they're present. Note: aggressive bot walls
@@ -156,20 +159,44 @@ Rules are enforced at the transport layer: the rate limit throttles every
 request, mandated headers are injected, and forbidden methods/paths are hard-
 blocked. **Only test systems you are authorized to test.**
 
-## Install
+## Install and update (no clone required)
+
+Install the latest `main` branch directly from GitHub's source archive. This
+does not require a local repository or even the `git` executable:
 
 ```bash
-pip install -e .
-# optional, for out-of-band verification:
-#   install interactsh-client from https://github.com/projectdiscovery/interactsh
+pipx install https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip
+wafmcp --version
 ```
+
+When a new change is published, update the existing installation in place:
+
+```bash
+wafmcp update
+```
+
+The update command force-reinstalls the canonical `main` archive, so it also
+picks up changes that do not bump the package version. Restart the MCP client
+after it completes. For local development, clone the repository and use
+`pip install -e ".[dev]"` instead.
+
+For an automatically refreshed, ephemeral installation, use `uvx`. `--refresh`
+checks the source archive again whenever the MCP process starts:
+
+```bash
+uvx --refresh --from https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip wafmcp
+```
+
+The persistent `pipx` installation is better for offline/reliable startup;
+`uvx --refresh` trades startup time and network availability for automatic
+updates.
 
 ## Run as an MCP server
 
 ### opencode
 
-A ready `opencode.json` is included (project-local). It launches the server over
-stdio:
+A ready `opencode.json` is included for local development. Users who do not
+want a clone can launch the automatically refreshed GitHub version over stdio:
 
 ```json
 {
@@ -177,7 +204,13 @@ stdio:
   "mcp": {
     "wafmcp": {
       "type": "local",
-      "command": ["python", "-m", "wafmcp"],
+      "command": [
+        "uvx",
+        "--refresh",
+        "--from",
+        "https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip",
+        "wafmcp"
+      ],
       "enabled": true
     }
   }
@@ -193,7 +226,15 @@ for scope/rules and call `set_scope` before anything else.
 ```json
 {
   "mcpServers": {
-    "wafmcp": { "command": "wafmcp" }
+    "wafmcp": {
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        "https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip",
+        "wafmcp"
+      ]
+    }
   }
 }
 ```
