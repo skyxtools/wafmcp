@@ -18,7 +18,7 @@ UPDATE_URL = (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wafmcp",
-        description="Run or update the wafmcp MCP server.",
+        description="Run, update, or prepare the wafmcp MCP server.",
     )
     parser.add_argument(
         "--version",
@@ -31,7 +31,45 @@ def _parser() -> argparse.ArgumentParser:
         "update",
         help="upgrade to the latest main branch without a git clone",
     )
+    install_browser = commands.add_parser(
+        "install-browser",
+        help="install the Chromium runtime used by browser-based tools",
+    )
+    install_browser.add_argument(
+        "--with-deps",
+        action="store_true",
+        help="also ask Playwright to install OS packages; may require sudo/root",
+    )
     return parser
+
+
+def install_browser(*, with_deps: bool = False) -> int:
+    """Install the Chromium runtime using the current wafmcp environment."""
+    command = [
+        sys.executable,
+        "-m",
+        "playwright",
+        "install",
+    ]
+    if with_deps:
+        command.append("--with-deps")
+    command.append("chromium")
+
+    print("Installing Chromium browser runtime for wafmcp...", file=sys.stderr)
+    try:
+        result = subprocess.run(command, check=False)
+    except OSError as exc:
+        print(f"Unable to start Playwright installer: {exc}", file=sys.stderr)
+        return 1
+
+    if result.returncode == 0:
+        print("Browser runtime ready.", file=sys.stderr)
+    else:
+        print(
+            f"Browser runtime install failed (playwright exit code {result.returncode}).",
+            file=sys.stderr,
+        )
+    return result.returncode
 
 
 def update() -> int:
@@ -54,20 +92,31 @@ def update() -> int:
         print(f"Unable to start pip: {exc}", file=sys.stderr)
         return 1
 
-    if result.returncode == 0:
+    if result.returncode != 0:
+        print(f"Update failed (pip exit code {result.returncode}).", file=sys.stderr)
+        return result.returncode
+
+    browser_code = install_browser()
+    if browser_code == 0:
         print(
             "Update complete. Restart your MCP client to load the new version.",
             file=sys.stderr,
         )
     else:
-        print(f"Update failed (pip exit code {result.returncode}).", file=sys.stderr)
-    return result.returncode
+        print(
+            "Package update completed, but Chromium setup failed. "
+            "Run `wafmcp install-browser` after fixing the Playwright error above.",
+            file=sys.stderr,
+        )
+    return browser_code
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "update":
         return update()
+    if args.command == "install-browser":
+        return install_browser(with_deps=args.with_deps)
 
     # Keep the historical behavior: `wafmcp`, `wafmcp serve`, and
     # `python -m wafmcp` all start the stdio server.

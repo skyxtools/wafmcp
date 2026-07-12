@@ -833,7 +833,8 @@ def verify_xss_execution(
     Confirmation requires stable marker execution across ``trials``. CSP remains
     active. Out-of-scope subresources and redirects are blocked before network
     contact, which may produce a documented false negative if required scripts
-    are not included in engagement scope. Requires the optional Playwright setup.
+    are not included in engagement scope. Requires the Chromium runtime from
+    ``wafmcp install-browser``.
     """
     if (g := _require_scope()):
         return g
@@ -1727,7 +1728,7 @@ def verify_lfi(
 @mcp.tool()
 def browser_inspect(url: str, wait_ms: int = 2500, cookie: str | None = None,
                     headless: bool = True) -> str:
-    """Render a URL in a real headless browser (opt-in; needs Playwright) and
+    """Render a URL in a real headless browser and
     report iframe-security signals that HTTP clients can't see:
       - framing: X-Frame-Options / CSP frame-ancestors + frameable-by-attacker verdict
       - iframes: every <iframe> in the final DOM incl. JS-injected proxy iframes

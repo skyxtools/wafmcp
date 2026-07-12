@@ -15,7 +15,7 @@ from html.parser import HTMLParser
 from typing import Any, Callable
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
-from .browser import BrowserUnavailable, _ensure_playwright
+from .browser import BrowserUnavailable, _ensure_playwright, format_browser_exception
 from .http_client import Probe, Response, sanitize_headers
 from .rules import Rules
 from .scope import Scope
@@ -644,7 +644,7 @@ def _browser_run(
                         if response:
                             csp = response.headers.get("content-security-policy", "")
                     except Exception as exc:
-                        error = f"{type(exc).__name__}: {exc}"
+                        error = format_browser_exception(exc)
                     trial_rows.append({
                         "status": response.status if response else 0,
                         "marker_hits": hits,
@@ -668,7 +668,7 @@ def _browser_run(
     except BrowserUnavailable:
         raise
     except Exception as exc:
-        browser_error = f"{type(exc).__name__}: {exc}"
+        browser_error = format_browser_exception(exc)
     return {
         "executed": winning_payload is not None,
         "winning_payload": winning_payload,

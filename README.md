@@ -106,7 +106,7 @@ you how it would skew a finding and which oracle to trust instead.
   attacker-controlled host (Location oracle).
 - **`verify_lfi`** — path traversal / local file include, confirmed by a file
   content signature (e.g. `root:x:0:0`), not just a status change.
-- **`browser_inspect`** — *(opt-in, needs Playwright)* render a URL in a real
+- **`browser_inspect`** — render a URL in a real
   headless Chromium and report client-side signals HTTP clients can't see:
   framing (X-Frame-Options / CSP frame-ancestors + frameable-by-attacker
   verdict), **iframes in the final DOM** (incl. JS-injected proxy iframes),
@@ -114,23 +114,29 @@ you how it would skew a finding and which oracle to trust instead.
   keys. Accepts a `cookie` string to carry a manually-solved bot-wall cookie
   (e.g. DataDome) and `headless=false`.
 
-### Optional: browser module
+### Browser runtime
 
 ```bash
-pipx inject --include-apps wafmcp playwright
-playwright install chromium
+wafmcp install-browser
 ```
 
-For a local editable development installation, use
-`pip install -e ".[browser]"` instead.
+The Playwright Python package is installed as a normal `wafmcp` dependency.
+`wafmcp install-browser` installs Chromium from the same environment, which is
+more reliable than manually installing or exposing a separate `playwright`
+command through `pipx`. If Playwright reports missing Linux system packages,
+retry with:
 
-The core toolkit needs neither Playwright nor a browser; `browser_inspect`,
-`verify_xss_execution`, and `verify_stored_xss_page` return install instructions
-until they're present. Browser-based XSS verification uses an isolated context,
-keeps CSP active, blocks service workers, and scope-checks HTTP(S) and WebSocket
-connections before network contact. Note: aggressive bot walls (DataDome, etc.)
-can still challenge headless Chromium — solve the CAPTCHA once in your own
-browser and pass the resulting cookie via `cookie=`.
+```bash
+wafmcp install-browser --with-deps
+```
+
+`--with-deps` may require sudo/root. For a local editable development
+installation, use `pip install -e ".[dev]"` and then `wafmcp install-browser`.
+Browser-based XSS verification uses an isolated context, keeps CSP active,
+blocks service workers, and scope-checks HTTP(S) and WebSocket connections
+before network contact. Note: aggressive bot walls (DataDome, etc.) can still
+challenge headless Chromium — solve the CAPTCHA once in your own browser and
+pass the resulting cookie via `cookie=`.
 - **`mutate_payload`** — generate ordered bypass variants of ONE seed payload
   (encoding, comments, case, unicode, whitespace), stealthiest first.
 - **`oast_start` / `oast_poll`** — out-of-band callbacks via interactsh. A
@@ -269,6 +275,7 @@ does not require a local repository or even the `git` executable:
 
 ```bash
 pipx install https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip
+wafmcp install-browser
 wafmcp --version
 ```
 
@@ -279,17 +286,26 @@ wafmcp update
 ```
 
 The update command upgrades the canonical `main` archive using pip's
-`only-if-needed` dependency strategy, so dependencies are changed only when the
-new release requires it. Every published change must bump the package version
-for pip to recognize it as an upgrade. Restart the MCP client after the command
-completes. For local development, clone the repository and use
-`pip install -e ".[dev]"` instead.
+`only-if-needed` dependency strategy, then refreshes the Chromium browser runtime
+used by `browser_inspect` and the browser XSS oracles. Dependencies are changed
+only when the new release requires it. Every published change must bump the
+package version for pip to recognize it as an upgrade. Restart the MCP client
+after the command completes. For local development, clone the repository and use
+`pip install -e ".[dev]"` instead. When upgrading from a version older than
+`0.10.1`, run `wafmcp install-browser` once after `wafmcp update`; future
+updates run that step automatically.
 
 For an automatically refreshed, ephemeral installation, use `uvx`. `--refresh`
 checks the source archive again whenever the MCP process starts:
 
 ```bash
 uvx --refresh --from https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip wafmcp
+```
+
+For browser tools with `uvx`, install Chromium once from the same source:
+
+```bash
+uvx --from https://github.com/skyxtools/wafmcp/archive/refs/heads/main.zip wafmcp install-browser
 ```
 
 The persistent `pipx` installation is better for offline/reliable startup;

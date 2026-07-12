@@ -1,4 +1,4 @@
-"""Tests for the opt-in browser module.
+"""Tests for the browser module.
 
 Framing-verdict logic is pure and always tested. The live render is exercised
 only when Playwright + a browser binary are installed, and against a LOCAL mock
@@ -8,6 +8,7 @@ import importlib.util
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +16,21 @@ from wafmcp.browser import _frame_verdict, browser_inspect, BrowserUnavailable
 from wafmcp.scope import Scope
 
 _HAS_PLAYWRIGHT = importlib.util.find_spec("playwright") is not None
+
+
+def _has_chromium_runtime() -> bool:
+    if not _HAS_PLAYWRIGHT:
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            return Path(playwright.chromium.executable_path).exists()
+    except Exception:
+        return False
+
+
+_HAS_CHROMIUM = _has_chromium_runtime()
 
 
 # ---- framing verdict (pure logic, always runs) -----------------------------
@@ -50,12 +66,12 @@ def test_browser_unavailable_message():
     scope = Scope(rules=[], deny=[]); scope.configure("127.0.0.1:1")
     with pytest.raises(BrowserUnavailable) as e:
         browser_inspect(scope, "http://127.0.0.1:1/")
-    assert "pip install playwright" in str(e.value)
+    assert "wafmcp install-browser" in str(e.value)
 
 
 # ---- live render against a local mock --------------------------------------
 
-@pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright not installed")
+@pytest.mark.skipif(not _HAS_CHROMIUM, reason="playwright chromium runtime not installed")
 def test_browser_live_detects_iframe_and_framing():
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a): pass

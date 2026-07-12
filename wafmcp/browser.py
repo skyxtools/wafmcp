@@ -1,13 +1,13 @@
-"""Headless browser inspection - opt-in module for iframe / client-side testing.
+"""Headless browser inspection for iframe / client-side testing.
 
 Some targets only exist in a real browser context: a proxy iframe injected by
 JavaScript (e.g. Viator's gtm-orn.viator.com), DataDome-gated pages that block
 plain HTTP clients, DOM-based XSS, postMessage handlers. curl/httpx can't reach
 any of that. This module drives a real Chromium via Playwright.
 
-It is OPT-IN: Playwright is imported lazily. If it (or its browser binary) isn't
-installed, every call returns a clear install hint instead of raising - the core
-wafmcp toolkit stays dependency-light.
+Playwright is a required wafmcp dependency. The Chromium runtime is installed
+with `wafmcp install-browser`; if it is missing, browser tools return a clear
+environment-specific install hint.
 
 browser_inspect(url) renders the page and returns the signals that matter for
 iframe security:
@@ -31,15 +31,37 @@ class BrowserUnavailable(Exception):
     pass
 
 
+def browser_install_hint() -> str:
+    return (
+        "Run `wafmcp install-browser` to install Chromium for this wafmcp "
+        "environment. If system packages are missing, retry with "
+        "`wafmcp install-browser --with-deps`."
+    )
+
+
+def format_browser_exception(exc: Exception) -> str:
+    message = f"{type(exc).__name__}: {exc}"
+    lowered = message.lower()
+    missing_runtime_markers = (
+        "executable doesn't exist",
+        "browser has not been installed",
+        "please run the following command",
+        "playwright install",
+        "host system is missing dependencies",
+    )
+    if any(marker in lowered for marker in missing_runtime_markers):
+        return f"{message}\n{browser_install_hint()}"
+    return message
+
+
 def _ensure_playwright():
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
     except ImportError as e:
         raise BrowserUnavailable(
-            "Playwright is not installed. This is an opt-in feature. Install with:\n"
-            "  pip install playwright\n"
-            "  playwright install chromium\n"
-            "Then retry. The core wafmcp tools work without it."
+            "Playwright is missing from this wafmcp installation. Run "
+            "`wafmcp update`, or reinstall wafmcp from the GitHub main archive. "
+            f"Then run `wafmcp install-browser`. {browser_install_hint()}"
         ) from e
     return sync_playwright
 
@@ -169,7 +191,7 @@ def browser_inspect(
     Navigation is scope-checked. `cookie` (a raw "k=v; k2=v2" string) is injected
     before navigation - use it to carry a manually-solved DataDome/session cookie
     past a bot wall. headless=False can also help against aggressive bot defenses.
-    Raises BrowserUnavailable if Playwright is missing."""
+    Raises BrowserUnavailable if the required Playwright package is missing."""
     scope.check(url)  # gate navigation like every other egress
     sync_playwright = _ensure_playwright()
 
@@ -220,5 +242,5 @@ def browser_inspect(
     except BrowserUnavailable:
         raise
     except Exception as e:
-        rep.error = f"{type(e).__name__}: {e}"
+        rep.error = format_browser_exception(e)
     return rep

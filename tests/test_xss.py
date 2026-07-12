@@ -7,6 +7,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -26,6 +27,21 @@ from wafmcp.xss import (
 )
 
 _HAS_PLAYWRIGHT = importlib.util.find_spec("playwright") is not None
+
+
+def _has_chromium_runtime() -> bool:
+    if not _HAS_PLAYWRIGHT:
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            return Path(playwright.chromium.executable_path).exists()
+    except Exception:
+        return False
+
+
+_HAS_CHROMIUM = _has_chromium_runtime()
 
 
 def test_websocket_scope_url_preserves_explicit_ports_and_maps_default_schemes() -> None:
@@ -227,7 +243,7 @@ def test_browser_execution_requires_stable_marker_result_from_runner():
     assert all("__wafmcpXssHit" in item["payload"] for item in seen["payloads"])
 
 
-@pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright not installed")
+@pytest.mark.skipif(not _HAS_CHROMIUM, reason="playwright chromium runtime not installed")
 def test_browser_live_confirms_safe_reflected_marker():
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
