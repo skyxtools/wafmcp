@@ -40,6 +40,8 @@ from .browser import browser_inspect as _browser_inspect, BrowserUnavailable
 from .origin import gather_candidates, validate_origin
 from .passive import audit as passive_audit_fn
 from .race import verify_race as _oracle_race
+from .recon import advanced_recon as _advanced_recon
+from .recon import recon_network as _recon_network
 from .report import build_report
 from .rules import Rules, RuleViolation
 from .scope import Scope, OutOfScope
@@ -182,6 +184,119 @@ def scope_status() -> str:
     """Show the current in-scope allowlist, out-of-scope exclusions, and program
     rules. All probing is default-deny and locked until set_scope is called."""
     return _SCOPE.describe() + "\n" + _RULES.describe()
+
+
+@mcp.tool()
+def advanced_recon(
+    target: str,
+    identity: str | None = None,
+    use_certificate_transparency: bool = True,
+    max_ct_names: int = 200,
+    include_web: bool = True,
+    request_budget: int = 20,
+    max_scripts: int = 8,
+    active_ports_json: str | None = None,
+    confirm_active_scan: bool = False,
+    port_timeout: float = 0.8,
+) -> str:
+    """Initial, comprehensive reconnaissance for one authorized target.
+
+    Collects DNS (A/AAAA/CNAME/MX/NS/TXT/SOA/CAA/DS/DNSKEY), reverse DNS,
+    SPF/DMARC/MTA-STS, passive certificate-transparency names, TLS/certificate
+    metadata, HTTP headers and technology markers, robots/sitemaps/security.txt,
+    forms and hidden parameters, same-origin JavaScript/API/WebSocket/source-map
+    candidates, and optionally a bounded TCP service inventory.
+
+    Web reconnaissance performs GET only and does not recursively crawl the
+    discovered application endpoints. TCP checks require
+    ``confirm_active_scan=true`` and either ``active_ports_json`` or the built-in
+    bounded common-port set. Port-based service names are hints, not findings.
+    Every direct target contact is scope/rule gated.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        ports = _json_arg(active_ports_json, "active_ports_json")
+    except ValueError as e:
+        return str(e)
+    if ports is not None and not isinstance(ports, list):
+        return "active_ports_json must decode to a JSON array"
+    if ports is not None and any(type(item) is not int for item in ports):
+        return "active_ports_json must contain only integer port numbers"
+    parsed_ports = ports
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe(timeout=max(12.0, port_timeout + 2.0)) as p:
+            result = _advanced_recon(
+                p,
+                target=target,
+                identity_headers=identity_headers,
+                use_ct=use_certificate_transparency,
+                max_ct_names=max_ct_names,
+                include_web=include_web,
+                request_budget=request_budget,
+                max_scripts=max_scripts,
+                active_ports=parsed_ports,
+                confirm_active_scan=confirm_active_scan,
+                port_timeout=port_timeout,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID RECON INPUT: {e}"
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def recon_network(
+    cidr: str,
+    ports_json: str | None = None,
+    max_hosts: int = 256,
+    confirm_active_scan: bool = False,
+    timeout: float = 0.8,
+) -> str:
+    """Bounded active inventory for an operator-authorized IP network.
+
+    Uses TCP connect checks plus a passive server-first banner read. It sends no
+    version-detection payloads and never performs OS or vulnerability scanning.
+    The CIDR, every host, and every port are preflighted against scope/rules
+    before the first connection. ``confirm_active_scan=true`` is mandatory;
+    defaults to a documented common-port set when ``ports_json`` is omitted.
+    Maximum: 256 hosts, 100 ports, and 4096 host-port checks.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        ports = _json_arg(ports_json, "ports_json")
+    except ValueError as e:
+        return str(e)
+    if ports is not None and not isinstance(ports, list):
+        return "ports_json must decode to a JSON array"
+    if ports is not None and any(type(item) is not int for item in ports):
+        return "ports_json must contain only integer port numbers"
+    parsed_ports = ports
+    try:
+        with _probe() as p:
+            result = _recon_network(
+                p,
+                cidr=cidr,
+                ports=parsed_ports,
+                max_hosts=max_hosts,
+                confirm_active_scan=confirm_active_scan,
+                timeout=timeout,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID RECON INPUT: {e}"
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()

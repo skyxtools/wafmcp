@@ -52,6 +52,22 @@ you how it would skew a finding and which oracle to trust instead.
   Internet Archive CDX API. Uses host/domain matching, `collapse=urlkey`, date
   and status filters, hard result limits, and allow/deny scope filtering. It
   queries only the archive index and never visits a returned target URL.
+- **`advanced_recon`** — comprehensive **initial target reconnaissance** based
+  on the [OWASP WSTG information-gathering
+  methodology](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/01-Information_Gathering/README).
+  Combines DNS and reverse DNS, MX/NS/TXT/SOA/CAA/DNSSEC records,
+  SPF/DMARC/MTA-STS, passive certificate-transparency names, TLS version/cipher
+  and certificate SANs, HTTP/technology evidence, RFC-compliant robots,
+  sitemap and security.txt parsing, forms/hidden fields, and bounded
+  same-origin JavaScript/API/WebSocket/source-map discovery. It does not crawl
+  discovered application endpoints. Optional TCP checks require
+  `confirm_active_scan=true`; a port-number service name is explicitly only a
+  hint unless supported by a banner or protocol evidence.
+- **`recon_network`** — bounded, explicit active inventory for an authorized
+  CIDR. Preflights the complete host/port set against scope and program rules
+  before connecting, caps work at 256 hosts and 4096 checks, and uses TCP
+  connect plus server-first banner reads without sending version-detection
+  payloads. Open ports are inventory facts, not vulnerabilities.
 - **`analyze_jwt`** — **PortSwigger-aligned offline JWT/JWS audit.** Separates
   offline-confirmed weak HMAC secrets from mutations that still require server
   acceptance. Emits controlled probes for ignored/arbitrary signatures,
