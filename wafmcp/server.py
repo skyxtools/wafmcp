@@ -18,6 +18,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .http_client import Probe
+from .graphql_audit import audit_graphql as _audit_graphql
+from .graphql_audit import verify_graphql_access as _verify_graphql_access
 from .endpoints import extract_endpoints as _extract_endpoints
 from .endpoints import verify_lfi as _oracle_lfi
 from .endpoints import verify_open_redirect as _oracle_open_redirect
@@ -878,6 +880,107 @@ def analyze_jwt(
         claim_overrides=claim_overrides,
     )
     return json.dumps(result.to_dict(), indent=2)
+
+
+@mcp.tool()
+def audit_graphql(
+    url: str,
+    identity: str | None = None,
+    include_schema: bool = False,
+    test_get: bool = True,
+    test_form: bool = True,
+    test_batching: bool = True,
+    test_aliases: bool = True,
+    test_suggestions: bool = True,
+    test_introspection_bypass: bool = True,
+) -> str:
+    """Bounded, read-only GraphQL audit aligned with PortSwigger.
+
+    Confirms the endpoint with ``query{__typename}``, then checks standard and
+    whitespace-bypass introspection, schema suggestions, GET/form transports,
+    aliases, and two-item JSON batching. ``include_schema`` returns a bounded
+    query/mutation/type-name summary. These features are classified as exposure
+    or attack-surface signals, never as vulnerabilities without demonstrated
+    unauthorized data, CSRF, or rate-limit impact. No mutation is executed.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            result = _audit_graphql(
+                p,
+                url=url,
+                identity_headers=identity_headers,
+                include_schema=include_schema,
+                test_get=test_get,
+                test_form=test_form,
+                test_batching=test_batching,
+                test_aliases=test_aliases,
+                test_suggestions=test_suggestions,
+                test_introspection_bypass=test_introspection_bypass,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    return json.dumps(result.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_graphql_access(
+    url: str,
+    query: str,
+    owner_identity: str,
+    attacker_identity: str,
+    variables_json: str | None = None,
+    operation_name: str | None = None,
+    trials: int = 2,
+) -> str:
+    """GraphQL IDOR/BOLA oracle using owner, attacker, and anonymous controls.
+
+    Replays the exact same read-only query and variables as two different saved
+    identities. Confirms only when the attacker receives the owner's exact
+    normalized GraphQL ``data`` while anonymous is denied/different. Mutation
+    and subscription operations are refused so verification cannot change state.
+    """
+    if (g := _require_scope()):
+        return g
+    if owner_identity == attacker_identity:
+        return "owner_identity and attacker_identity must be different"
+    try:
+        variables = _json_arg(variables_json, "variables_json") or {}
+    except ValueError as e:
+        return str(e)
+    if not isinstance(variables, dict):
+        return "variables_json must decode to a JSON object"
+    try:
+        owner_headers = _IDENTITIES.get(owner_identity).headers
+        attacker_headers = _IDENTITIES.get(attacker_identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            verdict = _verify_graphql_access(
+                p,
+                url=url,
+                query=query,
+                variables=variables,
+                owner_headers=owner_headers,
+                attacker_headers=attacker_headers,
+                operation_name=operation_name,
+                trials=trials,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID GRAPHQL INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
 
 
 @mcp.tool()

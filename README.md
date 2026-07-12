@@ -60,6 +60,13 @@ you how it would skew a finding and which oracle to trust instead.
   and claim-lifetime issues without misreporting header presence as a finding.
   Accepts optional custom secret wordlists and claim overrides; never contacts a
   target itself.
+- **`audit_graphql`** — **[PortSwigger-aligned](https://portswigger.net/web-security/graphql),
+  read-only GraphQL mapping.**
+  Confirms an endpoint with `query{__typename}`, probes standard and
+  whitespace-bypass introspection, suggestions, GET/form transports, two-item
+  batching, and aliases. Optionally returns a bounded schema summary. Normal
+  GraphQL features remain exposure/attack-surface signals rather than findings;
+  the tool never executes a mutation.
 - **`probe_methods`** — which HTTP methods the endpoint accepts (PUT/DELETE/
   PATCH/TRACE) plus method-override header bypasses.
 - **`verify_open_redirect`** — confirms a param that drives a redirect to an
@@ -104,6 +111,11 @@ your own browser and pass the resulting cookie via `cookie=`.
   same request as owner vs. attacker vs. anonymous; confirms only when the
   attacker receives the owner's exact resource while anon is denied (public
   resources are correctly rejected as non-findings).
+- **`verify_graphql_access`** — **GraphQL IDOR/BOLA oracle.** Replays one exact
+  read-only query and variables as owner, a different authenticated user, and
+  anonymous. Confirms only when the attacker receives the owner's exact
+  normalized GraphQL `data` while anonymous is denied. Mutations and
+  subscriptions are refused.
 - **`verify_oast`** — **blind SSRF / RCE / XXE / blind SQLi.** Inject a
   `{OAST}` callback into your payload template; an interactsh interaction is the
   proof.
