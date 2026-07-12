@@ -67,6 +67,17 @@ you how it would skew a finding and which oracle to trust instead.
   batching, and aliases. Optionally returns a bounded schema summary. Normal
   GraphQL features remain exposure/attack-surface signals rather than findings;
   the tool never executes a mutation.
+- **`audit_api`** — **[PortSwigger-aligned](https://portswigger.net/web-security/api-testing),
+  read-only REST API reconnaissance.** Maps one endpoint with GET/OPTIONS and
+  checks a bounded, same-origin list of common OpenAPI, Swagger, and interactive
+  documentation paths. Documentation exposure, advertised methods, and JSON
+  responses are attack-surface signals, never findings by themselves.
+- **`analyze_openapi`** — offline OpenAPI/Swagger JSON analysis. Summarizes
+  servers, authentication schemes, operations, parameters, content types, and
+  sensitive-looking schema fields without contacting the target.
+- **`find_mass_assignment_candidates`** — offline object diff that identifies
+  fields returned by a read response but absent from the application's intended
+  update body. Results are hypotheses for reversible verification, not findings.
 - **`probe_methods`** — which HTTP methods the endpoint accepts (PUT/DELETE/
   PATCH/TRACE) plus method-override header bypasses.
 - **`verify_open_redirect`** — confirms a param that drives a redirect to an
@@ -116,6 +127,16 @@ your own browser and pass the resulting cookie via `cookie=`.
   anonymous. Confirms only when the attacker receives the owner's exact
   normalized GraphQL `data` while anonymous is denied. Mutations and
   subscriptions are refused.
+- **`verify_api_sspp`** — **read-only server-side parameter pollution oracle.**
+  Repeats baseline, direct override, encoded duplicate-parameter, truncation,
+  and invalid-parameter controls. Confirms only when the injected duplicate
+  deterministically matches the direct override and differs from baseline;
+  parser errors and response differences alone remain candidates.
+- **`verify_mass_assignment`** — **explicit, reversible state-change oracle.**
+  Requires `confirm_state_change=true`, reads the original field value, submits
+  one POST/PUT/PATCH candidate, verifies it with a fresh GET, then restores and
+  re-verifies the original value. It never sends DELETE and confirms only when
+  both the change and restoration succeed.
 - **`verify_oast`** — **blind SSRF / RCE / XXE / blind SQLi.** Inject a
   `{OAST}` callback into your payload template; an interactsh interaction is the
   proof.

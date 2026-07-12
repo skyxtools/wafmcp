@@ -17,6 +17,11 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from .api_testing import audit_api as _audit_api
+from .api_testing import mass_assignment_candidates as _mass_assignment_candidates
+from .api_testing import summarize_openapi as _summarize_openapi
+from .api_testing import verify_api_sspp as _verify_api_sspp
+from .api_testing import verify_mass_assignment as _verify_mass_assignment
 from .http_client import Probe
 from .graphql_audit import audit_graphql as _audit_graphql
 from .graphql_audit import verify_graphql_access as _verify_graphql_access
@@ -980,6 +985,187 @@ def verify_graphql_access(
         return f"RULE VIOLATION: {e}"
     except ValueError as e:
         return f"INVALID GRAPHQL INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
+
+
+@mcp.tool()
+def audit_api(
+    url: str,
+    identity: str | None = None,
+    doc_paths_json: str | None = None,
+) -> str:
+    """Read-only REST API reconnaissance aligned with PortSwigger.
+
+    Sends GET and OPTIONS to the supplied endpoint, then checks a bounded set of
+    common same-origin OpenAPI/Swagger documentation paths. Custom documentation
+    paths may be supplied as a JSON array. Documentation and advertised methods
+    are reported only as attack-surface signals, never as vulnerabilities.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        paths = _json_arg(doc_paths_json, "doc_paths_json")
+    except ValueError as e:
+        return str(e)
+    if paths is not None and not isinstance(paths, list):
+        return "doc_paths_json must decode to a JSON array"
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            result = _audit_api(
+                p,
+                url=url,
+                identity_headers=identity_headers,
+                doc_paths=[str(item) for item in paths] if paths is not None else None,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID API INPUT: {e}"
+    return json.dumps(result.to_dict(), indent=2)
+
+
+@mcp.tool()
+def analyze_openapi(document_json: str) -> str:
+    """Parse-only OpenAPI/Swagger JSON analysis; never contacts a target.
+
+    Summarizes servers, auth schemes, operations, parameters, accepted request
+    content types, and sensitive-looking schema field names. These remain review
+    candidates until an authorization or state-change oracle proves impact.
+    """
+    try:
+        document = _json_arg(document_json, "document_json")
+    except ValueError as e:
+        return str(e)
+    if not isinstance(document, dict):
+        return "document_json must decode to a JSON object"
+    try:
+        return json.dumps(_summarize_openapi(document), indent=2)
+    except ValueError as e:
+        return f"INVALID OPENAPI DOCUMENT: {e}"
+
+
+@mcp.tool()
+def find_mass_assignment_candidates(
+    read_object_json: str,
+    intended_update_json: str,
+) -> str:
+    """Offline PortSwigger-style mass-assignment candidate discovery.
+
+    Compares fields returned by a read response with fields in the application's
+    intended update request. Missing and sensitive-looking fields are hypotheses,
+    not findings; use the explicit, reversible verify_mass_assignment oracle.
+    """
+    try:
+        read_object = _json_arg(read_object_json, "read_object_json")
+        update_object = _json_arg(intended_update_json, "intended_update_json")
+    except ValueError as e:
+        return str(e)
+    if not isinstance(read_object, dict) or not isinstance(update_object, dict):
+        return "read_object_json and intended_update_json must decode to JSON objects"
+    return json.dumps(_mass_assignment_candidates(read_object, update_object), indent=2)
+
+
+@mcp.tool()
+def verify_api_sspp(
+    url: str,
+    parameter: str,
+    baseline_value: str,
+    override_value: str,
+    identity: str | None = None,
+    trials: int = 2,
+) -> str:
+    """Read-only server-side parameter pollution oracle for query strings.
+
+    Compares a baseline, direct override control, URL-encoded duplicate
+    parameter, truncation marker, and invalid parameter across repeated trials.
+    Confirms only when the injected duplicate deterministically matches the
+    direct override and differs from baseline; mere response changes are only
+    candidates because backend parsers vary.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            verdict = _verify_api_sspp(
+                p,
+                url=url,
+                parameter=parameter,
+                baseline_value=baseline_value,
+                override_value=override_value,
+                identity_headers=identity_headers,
+                trials=trials,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID API INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_mass_assignment(
+    update_url: str,
+    read_url: str,
+    method: str,
+    base_object_json: str,
+    candidate_field: str,
+    test_value_json: str,
+    identity: str | None = None,
+    confirm_state_change: bool = False,
+) -> str:
+    """Explicit, reversible mass-assignment state-change oracle.
+
+    Requires confirm_state_change=true. Reads the original field value, submits
+    one POST/PUT/PATCH containing the candidate field, verifies it with a fresh
+    GET, and always submits a restoration request followed by another GET.
+    Confirmation requires both the change and successful restoration. Never
+    sends DELETE. Choose a harmless, reversible test value permitted by program
+    rules; failed restoration requires immediate manual attention.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        base_object = _json_arg(base_object_json, "base_object_json")
+        test_value = json.loads(test_value_json)
+    except (ValueError, json.JSONDecodeError) as e:
+        return f"bad JSON input: {e}"
+    if not isinstance(base_object, dict):
+        return "base_object_json must decode to a JSON object"
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            verdict = _verify_mass_assignment(
+                p,
+                update_url=update_url,
+                read_url=read_url,
+                method=method,
+                base_object=base_object,
+                candidate_field=candidate_field,
+                test_value=test_value,
+                identity_headers=identity_headers,
+                confirm_state_change=confirm_state_change,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID API INPUT: {e}"
     return json.dumps(verdict.to_dict(), indent=2)
 
 
