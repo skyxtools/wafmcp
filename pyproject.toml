@@ -1,6 +1,6 @@
 [project]
 name = "wafmcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "Minimal, evidence-first MCP server for authorized WAF/web security testing"
 requires-python = ">=3.10"
 dependencies = [

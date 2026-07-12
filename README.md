@@ -52,8 +52,14 @@ you how it would skew a finding and which oracle to trust instead.
   Internet Archive CDX API. Uses host/domain matching, `collapse=urlkey`, date
   and status filters, hard result limits, and allow/deny scope filtering. It
   queries only the archive index and never visits a returned target URL.
-- **`analyze_jwt`** — decode + audit a JWT: `alg=none` forgery (emits a forged
-  token to replay), weak-HMAC-secret crack, `kid` injection surface, expiry.
+- **`analyze_jwt`** — **PortSwigger-aligned offline JWT/JWS audit.** Separates
+  offline-confirmed weak HMAC secrets from mutations that still require server
+  acceptance. Emits controlled probes for ignored/arbitrary signatures,
+  mixed-case `alg:none`, `kid` → `/dev/null`, and RS→HS confusion when the exact
+  public key is supplied. Surfaces `jwk`/`jku`/`x5c`/`x5u`, duplicate JOSE keys,
+  and claim-lifetime issues without misreporting header presence as a finding.
+  Accepts optional custom secret wordlists and claim overrides; never contacts a
+  target itself.
 - **`probe_methods`** — which HTTP methods the endpoint accepts (PUT/DELETE/
   PATCH/TRACE) plus method-override header bypasses.
 - **`verify_open_redirect`** — confirms a param that drives a redirect to an

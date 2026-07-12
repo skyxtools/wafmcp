@@ -843,13 +843,41 @@ def verify_race(
 
 
 @mcp.tool()
-def analyze_jwt(token: str) -> str:
-    """Decode and audit a JWT for deterministic flaws: alg=none surface (returns
-    a forged unsigned token to replay), weak HMAC secret (brute against a small
-    high-signal wordlist), kid injection, missing/long expiry, RS/HS confusion
-    surface. Pure token analysis - no target contact. next_steps tells you how
-    to confirm on the server."""
-    return json.dumps(_analyze_jwt(token).to_dict(), indent=2)
+def analyze_jwt(
+    token: str,
+    wordlist_json: str | None = None,
+    public_key_pem: str | None = None,
+    claim_overrides_json: str | None = None,
+) -> str:
+    """PortSwigger-aligned offline JWT/JWS audit; no target contact.
+
+    Separates offline-confirmed flaws from candidates that require server replay.
+    Produces bounded mutations for arbitrary-signature acceptance, mixed-case
+    ``alg:none``, ``kid`` /dev/null traversal, weak HMAC secrets, and (when the
+    exact verification public key is supplied) RS-to-HS algorithm confusion.
+    ``jwk``, ``jku``, ``x5c``, and ``x5u`` are reported only as key-selection
+    attack surfaces until a protected endpoint accepts a self-signed token.
+
+    ``wordlist_json`` may contain a custom JSON array of candidate HMAC secrets.
+    ``claim_overrides_json`` may contain claims for the replay mutations, for
+    example ``{"sub":"administrator","role":"admin"}``.
+    """
+    try:
+        wordlist = _json_arg(wordlist_json, "wordlist_json")
+        claim_overrides = _json_arg(claim_overrides_json, "claim_overrides_json")
+    except ValueError as e:
+        return str(e)
+    if wordlist is not None and not isinstance(wordlist, list):
+        return "wordlist_json must decode to a JSON array"
+    if claim_overrides is not None and not isinstance(claim_overrides, dict):
+        return "claim_overrides_json must decode to a JSON object"
+    result = _analyze_jwt(
+        token,
+        wordlist=[str(item) for item in wordlist] if wordlist is not None else None,
+        public_key_pem=public_key_pem,
+        claim_overrides=claim_overrides,
+    )
+    return json.dumps(result.to_dict(), indent=2)
 
 
 @mcp.tool()
