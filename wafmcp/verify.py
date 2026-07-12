@@ -7,7 +7,8 @@ when an oracle confirms it deterministically and repeatably:
     (e.g. `1 AND 1=1` behaves like baseline, `1 AND 1=2` diverges - boolean SQLi)
   - timing: an injected sleep reliably adds latency beyond baseline jitter
   - oast: the target performs an out-of-band callback we control (blind classes)
-  - reflection: an unescaped marker appears in a context that proves injection
+  - XSS: HTTP reflection establishes only a context candidate; stable harmless
+    marker execution in a real browser is required for confirmation
 
 Every oracle runs N trials and reports evidence, so the verdict is auditable,
 not a guess.
@@ -23,6 +24,7 @@ from urllib.parse import urlsplit
 from .http_client import Probe, Response
 from .oast import OastSession
 from .waf import Baseline
+from .xss import audit_reflected_xss
 
 
 @dataclass
@@ -448,55 +450,37 @@ def verify_reflection(
     url: str,
     param: str,
     in_body: bool = False,
+    confirm_state_change: bool = False,
 ) -> Verdict:
-    """Reflected-XSS oracle: canary -> context -> unencoded breaker.
+    """Compatibility wrapper for the XSS context audit.
 
-    1. Inject a unique canary; confirm it reflects and in what context.
-    2. Inject a context-appropriate breaker and confirm the special chars come
-       back UNENCODED (i.e. the app didn't escape them) in an executable spot.
-    A raw reflection alone is NOT a finding - only unencoded breakout is.
+    This function intentionally never confirms XSS from HTTP reflection alone.
+    Use the browser-backed ``verify_xss_execution`` MCP tool for confirmation.
     """
-    canary = "xq" + uuid.uuid4().hex[:8] + "zz"
-    r1 = _send(probe, method, url, param, canary, in_body)
-    if baseline.classify(r1) == "blocked":
-        return Verdict(False, "reflection", 0.0, ["canary request was WAF-blocked"], 1)
-    body = r1.body_text or r1.body_snippet
-    if canary not in body:
-        return Verdict(False, "reflection", 0.0, ["canary not reflected -> not injectable here"], 1)
-
-    ctx = _reflection_context(body, canary)
-    breaker = {
-        "html": f'<{canary}b>',
-        "attr_double": f'"{canary}x="',
-        "attr_single": f"'{canary}x='",
-        "script": f"';{canary}//",
-        "unknown": f'<{canary}b>"{canary}x',
-    }[ctx]
-    r2 = _send(probe, method, url, param, breaker, in_body)
-    body2 = r2.body_text or r2.body_snippet
-    ev = [f"canary reflected in context: {ctx}", f"breaker: {breaker}"]
-
-    # The raw special chars from the breaker must appear verbatim (i.e. unencoded).
-    raw_ok = breaker in body2
-    if raw_ok:
-        ev.append("breaker reflected UNENCODED in an executable context -> reflected XSS")
-    conf = 0.9 if raw_ok else 0.2
-    return Verdict(raw_ok, "reflection", conf, ev, 1)
-
-
-def _reflection_context(body: str, canary: str) -> str:
-    i = body.find(canary)
-    pre = body[max(0, i - 40):i]
-    # crude but effective context sniffing around the reflection point
-    if "<script" in pre.lower() and "</script" not in pre.lower():
-        return "script"
-    if pre.rstrip().endswith('="') or pre.count('"') % 2 == 1:
-        return "attr_double"
-    if pre.rstrip().endswith("='") or pre.count("'") % 2 == 1:
-        return "attr_single"
-    if ">" in pre and "<" not in pre.split(">")[-1]:
-        return "html"
-    return "unknown"
+    audit = audit_reflected_xss(
+        probe,
+        baseline,
+        method=method,
+        url=url,
+        param=param,
+        in_body=in_body,
+        confirm_state_change=confirm_state_change,
+    )
+    details = audit.to_dict()
+    evidence = [
+        f"classification={audit.classification}",
+        f"reflected={audit.reflected}",
+        f"candidate={audit.candidate}",
+        "HTTP reflection is not execution proof; browser verification is required.",
+    ]
+    return Verdict(
+        False,
+        "xss_context_audit",
+        0.55 if audit.candidate else 0.0,
+        evidence,
+        len(audit.observations),
+        details,
+    )
 
 
 def verify_oast(

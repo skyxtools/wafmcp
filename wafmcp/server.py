@@ -50,10 +50,14 @@ from .verify import verify_access_control as _oracle_access_control
 from .verify import verify_cors as _oracle_cors
 from .verify import verify_differential as _oracle_differential
 from .verify import verify_oast as _oracle_oast
-from .verify import verify_reflection as _oracle_reflection
 from .verify import verify_timing as _oracle_timing
 from .waf import Baseline, calibrate
 from .wayback import WaybackError, fetch_wayback_urls as _fetch_wayback_urls
+from .xss import analyze_dom_javascript as _analyze_dom_xss
+from .xss import audit_reflected_xss as _audit_reflected_xss
+from .xss import build_xss_payloads as _build_xss_payloads
+from .xss import verify_stored_xss_page as _verify_stored_xss_page
+from .xss import verify_xss_execution as _verify_xss_execution
 
 _INSTRUCTIONS = """\
 wafmcp is an evidence-first WAF/web testing server for AUTHORIZED engagements.
@@ -709,22 +713,203 @@ def check_cors(
     return json.dumps(v.to_dict(), indent=2)
 
 
-@mcp.tool()
-def verify_reflection(method: str, url: str, param: str, in_body: bool = False) -> str:
-    """Reflected-XSS oracle: injects a unique canary, detects the reflection
-    context (html/attribute/script), then confirms the context breaker comes back
-    UNENCODED. A plain reflection is NOT reported - only unencoded breakout is."""
+def _run_xss_audit(
+    method: str,
+    url: str,
+    param: str,
+    in_body: bool = False,
+    identity: str | None = None,
+    confirm_state_change: bool = False,
+) -> str:
     if (g := _require_scope()):
         return g
     bl = _baseline_for(url)
     try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
         with _probe() as p:
-            v = _oracle_reflection(p, bl, method=method, url=url, param=param, in_body=in_body)
+            result = _audit_reflected_xss(
+                p,
+                bl,
+                method=method,
+                url=url,
+                param=param,
+                in_body=in_body,
+                identity_headers=identity_headers,
+                confirm_state_change=confirm_state_change,
+            )
     except OutOfScope as e:
         return f"OUT OF SCOPE: {e}"
     except RuleViolation as e:
         return f"RULE VIOLATION: {e}"
-    return json.dumps(v.to_dict(), indent=2)
+    except ValueError as e:
+        return f"INVALID XSS INPUT: {e}"
+    return json.dumps(result.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_reflection(
+    method: str,
+    url: str,
+    param: str,
+    in_body: bool = False,
+    identity: str | None = None,
+    confirm_state_change: bool = False,
+) -> str:
+    """Deprecated name for the PortSwigger-aligned reflected-XSS context audit.
+
+    Injects an alphanumeric canary, identifies every HTML/attribute/JavaScript
+    context, then measures context delimiters independently. It returns a
+    ``candidate`` but deliberately never ``confirmed=true`` from HTTP reflection
+    alone. Use ``verify_xss_execution`` for real browser execution proof.
+    """
+    return _run_xss_audit(method, url, param, in_body, identity, confirm_state_change)
+
+
+@mcp.tool()
+def audit_xss(
+    method: str,
+    url: str,
+    param: str,
+    in_body: bool = False,
+    identity: str | None = None,
+    confirm_state_change: bool = False,
+) -> str:
+    """PortSwigger-aligned reflected-XSS context and encoding audit.
+
+    Equivalent to the corrected ``verify_reflection`` tool. It maps all
+    reflection locations and returns only candidates; arbitrary JavaScript must
+    execute in ``verify_xss_execution`` before a finding is confirmed.
+    """
+    return _run_xss_audit(method, url, param, in_body, identity, confirm_state_change)
+
+
+@mcp.tool()
+def analyze_dom_xss(javascript_source: str) -> str:
+    """Offline DOM-XSS source/sink inventory; never contacts a target.
+
+    Identifies URL, document, window.name, postMessage, and storage sources plus
+    HTML, JavaScript execution, jQuery, and navigation sinks with line numbers.
+    Source and sink co-presence is a review candidate, not proof of taint flow.
+    """
+    try:
+        return json.dumps(_analyze_dom_xss(javascript_source), indent=2)
+    except ValueError as e:
+        return f"INVALID JAVASCRIPT INPUT: {e}"
+
+
+@mcp.tool()
+def prepare_xss_payloads(token: str | None = None) -> str:
+    """Generate harmless marker payloads for PortSwigger XSS contexts.
+
+    Payloads only call ``window.__wafmcpXssHit``. They do not read cookies,
+    credentials, storage, or send data. For stored XSS, submit one payload to a
+    disposable test object yourself, call ``verify_stored_xss_page`` with the
+    returned token, then remove the test object.
+    """
+    try:
+        return json.dumps(_build_xss_payloads(token), indent=2)
+    except ValueError as e:
+        return f"INVALID XSS TOKEN: {e}"
+
+
+@mcp.tool()
+def verify_xss_execution(
+    url: str,
+    param: str,
+    injection_location: str = "query",
+    identity: str | None = None,
+    trials: int = 2,
+    wait_ms: int = 1000,
+    timeout_ms: int = 20000,
+    headless: bool = True,
+) -> str:
+    """Confirm reflected or DOM XSS through real Chromium execution.
+
+    Supports query parameters, URL fragments, and a ``{XSS}`` path placeholder.
+    Tries bounded, context-specific payloads that only invoke a per-run marker.
+    Confirmation requires stable marker execution across ``trials``. CSP remains
+    active. Out-of-scope subresources and redirects are blocked before network
+    contact, which may produce a documented false negative if required scripts
+    are not included in engagement scope. Requires the optional Playwright setup.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        verdict = _verify_xss_execution(
+            _SCOPE,
+            rules=_RULES,
+            url=url,
+            param=param,
+            injection_location=injection_location,
+            identity_headers=identity_headers,
+            trials=trials,
+            wait_ms=wait_ms,
+            timeout_ms=timeout_ms,
+            headless=headless,
+        )
+    except BrowserUnavailable as e:
+        return str(e)
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID XSS INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_stored_xss_page(
+    url: str,
+    token: str,
+    identity: str | None = None,
+    trials: int = 2,
+    wait_ms: int = 1000,
+    timeout_ms: int = 20000,
+    headless: bool = True,
+) -> str:
+    """Confirm a previously stored safe XSS marker in real Chromium.
+
+    First call ``prepare_xss_payloads``, store one payload in a disposable test
+    object using the authorized workflow, then supply the view URL and token.
+    This oracle only visits the page and never creates or deletes stored data.
+    Confirmation requires stable marker execution; cleanup remains explicit and
+    operator-controlled.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        verdict = _verify_stored_xss_page(
+            _SCOPE,
+            rules=_RULES,
+            url=url,
+            token=token,
+            identity_headers=identity_headers,
+            trials=trials,
+            wait_ms=wait_ms,
+            timeout_ms=timeout_ms,
+            headless=headless,
+        )
+    except BrowserUnavailable as e:
+        return str(e)
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID XSS INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
 
 
 @mcp.tool()

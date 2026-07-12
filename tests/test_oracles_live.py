@@ -297,7 +297,7 @@ def test_cors_trusted_origin_is_not_exploitable_without_separate_prerequisite():
 
 # ---- reflected XSS ---------------------------------------------------------
 
-def test_reflection_confirmed_unencoded():
+def test_reflection_unencoded_is_candidate_until_browser_execution():
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
         def do_GET(self):
@@ -309,7 +309,9 @@ def test_reflection_confirmed_unencoded():
         p, Baseline(target=f"http://127.0.0.1:{port}/"),
         method="GET", url=f"http://127.0.0.1:{port}/s", param="q",
     )
-    assert v.confirmed, v.to_dict()
+    assert not v.confirmed, v.to_dict()
+    assert v.details["candidate"]
+    assert v.details["classification"] == "browser_execution_required"
     p.close(); srv.shutdown()
 
 

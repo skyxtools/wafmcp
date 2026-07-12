@@ -124,10 +124,13 @@ playwright install chromium
 For a local editable development installation, use
 `pip install -e ".[browser]"` instead.
 
-The core toolkit needs neither Playwright nor a browser; `browser_inspect`
-returns install instructions until they're present. Note: aggressive bot walls
-(DataDome, etc.) can still challenge headless Chromium — solve the CAPTCHA once in
-your own browser and pass the resulting cookie via `cookie=`.
+The core toolkit needs neither Playwright nor a browser; `browser_inspect`,
+`verify_xss_execution`, and `verify_stored_xss_page` return install instructions
+until they're present. Browser-based XSS verification uses an isolated context,
+keeps CSP active, blocks service workers, and scope-checks HTTP(S) and WebSocket
+connections before network contact. Note: aggressive bot walls (DataDome, etc.)
+can still challenge headless Chromium — solve the CAPTCHA once in your own
+browser and pass the resulting cookie via `cookie=`.
 - **`mutate_payload`** — generate ordered bypass variants of ONE seed payload
   (encoding, comments, case, unicode, whitespace), stealthiest first.
 - **`oast_start` / `oast_poll`** — out-of-band callbacks via interactsh. A
@@ -182,9 +185,26 @@ your own browser and pass the resulting cookie via `cookie=`.
   attached Lax/Strict cookie remains a candidate, and `ACAO: *` is never
   misreported as credentialed browser access. A real-browser PoC is still needed
   to account for browser-level third-party-cookie blocking.
-- **`verify_reflection`** — **reflected XSS.** Canary → context detection
-  (html/attr/script) → confirms the breaker returns *unencoded*. A plain
-  reflection is not reported.
+- **`audit_xss` / `verify_reflection`** — **[PortSwigger-aligned reflected-XSS
+  context audit](https://portswigger.net/web-security/cross-site-scripting).**
+  Maps every HTML text, quoted/unquoted attribute, URL/event attribute,
+  JavaScript string/code/template, comment, and non-HTML reflection. Context
+  metacharacters are tested independently. HTTP reflection—even unencoded—is
+  only a candidate and deliberately never returns `confirmed=true`.
+- **`verify_xss_execution`** — **reflected/DOM XSS browser oracle.** Uses bounded
+  context payloads that only call a per-run in-page marker; they never read
+  cookies, credentials, or storage and never exfiltrate data. Confirmation
+  requires stable JavaScript marker execution in Chromium with CSP active.
+  Supports query, fragment, and `{XSS}` path-placeholder sources. Browser
+  requests and redirects outside scope are aborted before contact.
+- **`analyze_dom_xss`** — offline JavaScript inventory of PortSwigger DOM sources
+  and HTML/JavaScript/jQuery/navigation sinks with line numbers. Source/sink
+  co-presence remains a candidate until browser execution or manual data-flow
+  analysis proves the connection.
+- **`prepare_xss_payloads` / `verify_stored_xss_page`** — safe stored-XSS
+  workflow. The operator stores a harmless marker in a disposable test object;
+  the verifier only opens its view page and confirms stable execution. Creation
+  and cleanup are never performed implicitly.
 - **`passive_audit`** — zero-attack signal from one response: missing security
   headers, weak cookie flags, and leaked secrets (AWS/Google/GitHub keys, JWTs,
   private keys).
