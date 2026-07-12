@@ -78,6 +78,12 @@ you how it would skew a finding and which oracle to trust instead.
 - **`find_mass_assignment_candidates`** — offline object diff that identifies
   fields returned by a read response but absent from the application's intended
   update body. Results are hypotheses for reversible verification, not findings.
+- **`plan_logic_tests`** — offline **[PortSwigger-aligned business-logic
+  planner](https://portswigger.net/web-security/logic-flaws)**. Converts explicit
+  workflow steps, parameters, prerequisites, and domain invariants into bounded
+  checks for excessive client trust, missing/unconventional input, repeated or
+  skipped steps, and domain-sensitive state. It sends no traffic and reports no
+  vulnerabilities.
 - **`probe_methods`** — which HTTP methods the endpoint accepts (PUT/DELETE/
   PATCH/TRACE) plus method-override header bypasses.
 - **`verify_open_redirect`** — confirms a param that drives a redirect to an
@@ -137,6 +143,17 @@ your own browser and pass the resulting cookie via `cookie=`.
   one POST/PUT/PATCH candidate, verifies it with a fresh GET, then restores and
   re-verifies the original value. It never sends DELETE and confirms only when
   both the change and restoration succeed.
+- **`verify_workflow_gate`** — **read-only skipped-prerequisite oracle.** Repeats
+  a final-step GET as an identity that completed the workflow, an equivalent
+  fresh identity that did not, and anonymous. It confirms only when an explicit
+  JSON success assertion is stable for completed and fresh sessions but absent
+  for anonymous.
+- **`verify_logic_invariant`** — **explicit, reversible business-rule oracle.**
+  Requires `confirm_state_change=true`, verifies that the baseline JSON satisfies
+  declared invariants, performs exactly one POST/PUT/PATCH action, and confirms
+  only if persisted state violates an invariant and the supplied restoration
+  returns the full JSON snapshot to baseline. Timestamp/version fields can be
+  excluded only through explicit volatile paths; DELETE is refused.
 - **`verify_oast`** — **blind SSRF / RCE / XXE / blind SQLi.** Inject a
   `{OAST}` callback into your payload template; an interactsh interaction is the
   proof.

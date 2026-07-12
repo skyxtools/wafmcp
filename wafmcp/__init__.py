@@ -1,3 +1,3 @@
 """wafmcp - minimal, evidence-first MCP server for authorized WAF/web testing."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

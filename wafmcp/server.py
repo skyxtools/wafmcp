@@ -30,6 +30,9 @@ from .endpoints import verify_lfi as _oracle_lfi
 from .endpoints import verify_open_redirect as _oracle_open_redirect
 from .identities import IdentityStore
 from .jwt_audit import analyze as _analyze_jwt
+from .logic_flaws import build_logic_test_plan as _build_logic_test_plan
+from .logic_flaws import verify_logic_invariant as _verify_logic_invariant
+from .logic_flaws import verify_workflow_gate as _verify_workflow_gate
 from .methods import audit_methods as _audit_methods
 from .mutate import mutate
 from .oast import OastSession, OastUnavailable
@@ -1166,6 +1169,147 @@ def verify_mass_assignment(
         return f"RULE VIOLATION: {e}"
     except ValueError as e:
         return f"INVALID API INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
+
+
+@mcp.tool()
+def plan_logic_tests(workflow_json: str) -> str:
+    """Build an offline PortSwigger-aligned business-logic test plan.
+
+    ``workflow_json`` declares workflow steps, parameters, prerequisites, and
+    business invariants. The result maps client-side trust, missing/odd input,
+    sequence deviations, and domain-specific review points. It sends no traffic
+    and never treats a hypothesis as a vulnerability.
+    """
+    try:
+        workflow = _json_arg(workflow_json, "workflow_json")
+    except ValueError as e:
+        return str(e)
+    if not isinstance(workflow, dict):
+        return "workflow_json must decode to a JSON object"
+    try:
+        return json.dumps(_build_logic_test_plan(workflow), indent=2)
+    except ValueError as e:
+        return f"INVALID LOGIC WORKFLOW: {e}"
+
+
+@mcp.tool()
+def verify_workflow_gate(
+    url: str,
+    completed_identity: str,
+    fresh_identity: str,
+    success_assertion_json: str,
+    trials: int = 2,
+) -> str:
+    """Read-only workflow-sequence bypass oracle.
+
+    GETs the protected final-step URL as a session that completed the intended
+    prerequisite, an equivalent fresh authenticated session that did not, and
+    anonymous. ``success_assertion_json`` is an explicit JSON-state predicate,
+    for example ``{"path":"access","operator":"eq","value":"granted"}``.
+    Confirmation requires stable repeated results: completed and fresh satisfy
+    the predicate while anonymous does not. No workflow mutation is performed.
+    """
+    if (g := _require_scope()):
+        return g
+    if completed_identity == fresh_identity:
+        return "completed_identity and fresh_identity must be different"
+    try:
+        assertion = _json_arg(success_assertion_json, "success_assertion_json")
+    except ValueError as e:
+        return str(e)
+    if not isinstance(assertion, dict):
+        return "success_assertion_json must decode to a JSON object"
+    try:
+        completed_headers = _IDENTITIES.get(completed_identity).headers
+        fresh_headers = _IDENTITIES.get(fresh_identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            verdict = _verify_workflow_gate(
+                p,
+                url=url,
+                completed_headers=completed_headers,
+                fresh_headers=fresh_headers,
+                success_assertion=assertion,
+                trials=trials,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID LOGIC INPUT: {e}"
+    return json.dumps(verdict.to_dict(), indent=2)
+
+
+@mcp.tool()
+def verify_logic_invariant(
+    action_url: str,
+    state_url: str,
+    action_method: str,
+    action_body_json: str,
+    invariants_json: str,
+    restore_url: str,
+    restore_method: str,
+    restore_body_json: str,
+    identity: str | None = None,
+    volatile_paths_json: str | None = None,
+    confirm_state_change: bool = False,
+) -> str:
+    """Explicit, reversible business-invariant oracle.
+
+    Reads a JSON state that initially satisfies operator-declared invariants,
+    performs exactly one POST/PUT/PATCH action, reads persisted state again,
+    then always performs the supplied restoration and verifies the original JSON
+    state. ``volatile_paths_json`` may explicitly exclude timestamp/version paths
+    from this equality check. Confirmation requires a persisted invariant
+    violation and verified restoration. DELETE is refused. Use only a harmless
+    disposable resource and set ``confirm_state_change=true`` after reviewing
+    both bodies.
+    """
+    if (g := _require_scope()):
+        return g
+    try:
+        action_body = _json_arg(action_body_json, "action_body_json")
+        invariants = _json_arg(invariants_json, "invariants_json")
+        restore_body = _json_arg(restore_body_json, "restore_body_json")
+        volatile_paths = _json_arg(volatile_paths_json, "volatile_paths_json")
+    except ValueError as e:
+        return str(e)
+    if not isinstance(action_body, dict) or not isinstance(restore_body, dict):
+        return "action_body_json and restore_body_json must decode to JSON objects"
+    if not isinstance(invariants, list):
+        return "invariants_json must decode to a JSON array"
+    if volatile_paths is not None and not isinstance(volatile_paths, list):
+        return "volatile_paths_json must decode to a JSON array"
+    try:
+        identity_headers = _IDENTITIES.get(identity).headers
+    except KeyError as e:
+        return str(e)
+    try:
+        with _probe() as p:
+            verdict = _verify_logic_invariant(
+                p,
+                action_url=action_url,
+                state_url=state_url,
+                action_method=action_method,
+                action_body=action_body,
+                invariants=invariants,
+                restore_url=restore_url,
+                restore_method=restore_method,
+                restore_body=restore_body,
+                identity_headers=identity_headers,
+                volatile_paths=volatile_paths,
+                confirm_state_change=confirm_state_change,
+            )
+    except OutOfScope as e:
+        return f"OUT OF SCOPE: {e}"
+    except RuleViolation as e:
+        return f"RULE VIOLATION: {e}"
+    except ValueError as e:
+        return f"INVALID LOGIC INPUT: {e}"
     return json.dumps(verdict.to_dict(), indent=2)
 
 
